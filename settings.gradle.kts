@@ -17,3 +17,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "sha1-kotlin"
+
