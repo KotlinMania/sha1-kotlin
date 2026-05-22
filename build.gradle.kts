@@ -290,12 +290,16 @@ tasks.register("test") {
 // safety net so future generated tasks of the same shape are picked up
 // automatically.
 val fullTargetBuildTaskNames = setOf(
+    // Android KMP main/host/device classes + assembled outputs.
     "compileAndroidMain",
     "compileAndroidHostTest",
     "compileAndroidDeviceTest",
     "assembleAndroidMain",
+    "assembleAndroidHostTest",
+    "assembleAndroidDeviceTest",
     "assembleUnitTest",
     "assembleAndroidTest",
+    // JVM, JS, Wasm-JS, Wasm-WASI compile classes.
     "jvmMainClasses",
     "jvmTestClasses",
     "jsMainClasses",
@@ -304,6 +308,7 @@ val fullTargetBuildTaskNames = setOf(
     "wasmJsTestClasses",
     "wasmWasiMainClasses",
     "wasmWasiTestClasses",
+    // Native binary aggregators (main + test) for every configured target.
     "androidNativeArm32Binaries",
     "androidNativeArm32TestBinaries",
     "androidNativeArm64Binaries",
@@ -338,7 +343,81 @@ val fullTargetBuildTaskNames = setOf(
     "watchosDeviceArm64TestBinaries",
     "watchosSimulatorArm64Binaries",
     "watchosSimulatorArm64TestBinaries",
+    // XCFramework assembly: the umbrella plus the Debug/Release variants
+    // and every generated fat-framework task (also caught by the
+    // afterEvaluate XCFramework suffix matcher; listed explicitly for
+    // audit visibility).
     "assembleSha1XCFramework",
+    "assembleSha1DebugXCFramework",
+    "assembleSha1ReleaseXCFramework",
+    "assembleDebugIosFatFrameworkForSha1XCFramework",
+    "assembleReleaseIosFatFrameworkForSha1XCFramework",
+    "assembleDebugIosSimulatorFatFrameworkForSha1XCFramework",
+    "assembleReleaseIosSimulatorFatFrameworkForSha1XCFramework",
+    "assembleDebugMacosFatFrameworkForSha1XCFramework",
+    "assembleReleaseMacosFatFrameworkForSha1XCFramework",
+    "assembleDebugTvosFatFrameworkForSha1XCFramework",
+    "assembleReleaseTvosFatFrameworkForSha1XCFramework",
+    "assembleDebugTvosSimulatorFatFrameworkForSha1XCFramework",
+    "assembleReleaseTvosSimulatorFatFrameworkForSha1XCFramework",
+    "assembleDebugWatchosFatFrameworkForSha1XCFramework",
+    "assembleReleaseWatchosFatFrameworkForSha1XCFramework",
+    "assembleDebugWatchosSimulatorFatFrameworkForSha1XCFramework",
+    "assembleReleaseWatchosSimulatorFatFrameworkForSha1XCFramework",
+    // embedSwiftExportForXcode is intentionally omitted: although the
+    // runbook lists it under the swiftExport target surface, the task
+    // requires Xcode-supplied env vars (SDK_NAME, CONFIGURATION,
+    // TARGET_BUILD_DIR, ARCHS, FRAMEWORKS_FOLDER_PATH) and fails when
+    // invoked from a plain Gradle CLI. It is exercised by Xcode-driven
+    // consumers, not by the CI artifact gate.
+    //
+    // Publication metadata + per-target export coordinates.
+    "exportCommonSourceSetsMetadataLocationsForMetadataApiElements",
+    "exportRootPublicationCoordinatesForMetadataApiElements",
+    "exportCrossCompilationMetadataForAndroidNativeArm32ApiElements",
+    "exportCrossCompilationMetadataForAndroidNativeArm64ApiElements",
+    "exportCrossCompilationMetadataForAndroidNativeX64ApiElements",
+    "exportCrossCompilationMetadataForAndroidNativeX86ApiElements",
+    "exportCrossCompilationMetadataForIosArm64ApiElements",
+    "exportCrossCompilationMetadataForIosSimulatorArm64ApiElements",
+    "exportCrossCompilationMetadataForIosX64ApiElements",
+    "exportCrossCompilationMetadataForLinuxArm64ApiElements",
+    "exportCrossCompilationMetadataForLinuxX64ApiElements",
+    "exportCrossCompilationMetadataForMacosArm64ApiElements",
+    "exportCrossCompilationMetadataForMingwX64ApiElements",
+    "exportCrossCompilationMetadataForTvosArm64ApiElements",
+    "exportCrossCompilationMetadataForTvosSimulatorArm64ApiElements",
+    "exportCrossCompilationMetadataForWatchosArm32ApiElements",
+    "exportCrossCompilationMetadataForWatchosArm64ApiElements",
+    "exportCrossCompilationMetadataForWatchosDeviceArm64ApiElements",
+    "exportCrossCompilationMetadataForWatchosSimulatorArm64ApiElements",
+    "exportTargetPublicationCoordinatesForAndroidApiElements",
+    "exportTargetPublicationCoordinatesForAndroidRuntimeElements",
+    "exportTargetPublicationCoordinatesForAndroidNativeArm32ApiElements",
+    "exportTargetPublicationCoordinatesForAndroidNativeArm64ApiElements",
+    "exportTargetPublicationCoordinatesForAndroidNativeX64ApiElements",
+    "exportTargetPublicationCoordinatesForAndroidNativeX86ApiElements",
+    "exportTargetPublicationCoordinatesForIosArm64ApiElements",
+    "exportTargetPublicationCoordinatesForIosSimulatorArm64ApiElements",
+    "exportTargetPublicationCoordinatesForIosX64ApiElements",
+    "exportTargetPublicationCoordinatesForJsApiElements",
+    "exportTargetPublicationCoordinatesForJsRuntimeElements",
+    "exportTargetPublicationCoordinatesForJvmApiElements",
+    "exportTargetPublicationCoordinatesForJvmRuntimeElements",
+    "exportTargetPublicationCoordinatesForLinuxArm64ApiElements",
+    "exportTargetPublicationCoordinatesForLinuxX64ApiElements",
+    "exportTargetPublicationCoordinatesForMacosArm64ApiElements",
+    "exportTargetPublicationCoordinatesForMingwX64ApiElements",
+    "exportTargetPublicationCoordinatesForTvosArm64ApiElements",
+    "exportTargetPublicationCoordinatesForTvosSimulatorArm64ApiElements",
+    "exportTargetPublicationCoordinatesForWasmJsApiElements",
+    "exportTargetPublicationCoordinatesForWasmJsRuntimeElements",
+    "exportTargetPublicationCoordinatesForWasmWasiApiElements",
+    "exportTargetPublicationCoordinatesForWasmWasiRuntimeElements",
+    "exportTargetPublicationCoordinatesForWatchosArm32ApiElements",
+    "exportTargetPublicationCoordinatesForWatchosArm64ApiElements",
+    "exportTargetPublicationCoordinatesForWatchosDeviceArm64ApiElements",
+    "exportTargetPublicationCoordinatesForWatchosSimulatorArm64ApiElements",
 )
 
 tasks.named("build") {
@@ -352,7 +431,9 @@ afterEvaluate {
                 name.endsWith("MainClasses") ||
                     name.endsWith("TestClasses") ||
                     name.endsWith("Binaries") ||
-                    name.endsWith("XCFramework")
+                    name.endsWith("XCFramework") ||
+                    name.startsWith("exportCrossCompilationMetadataFor") ||
+                    name.startsWith("exportTargetPublicationCoordinatesFor")
             },
         )
     }
