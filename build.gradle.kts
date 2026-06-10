@@ -37,13 +37,11 @@ val frameworkName = providers.gradleProperty("project.frameworkName").getOrElse(
 val projectNamespace = providers.gradleProperty("project.namespace").getOrElse("io.github.kotlinmania")
 val kotlinVersion = providers.gradleProperty("versions.kotlin").getOrElse("2.4.0")
 val isCodeqlBuild = providers.gradleProperty("kotlinmania.codeql").map(String::toBoolean).getOrElse(false)
-val commonMainBundleName = providers.gradleProperty("project.dependencies.commonMainBundle").get()
-val commonMainDependencyBundle =
+val commonMainBundleName = providers.gradleProperty("project.dependencies.commonMainBundle").getOrElse("")
+val libsCatalog =
     extensions
         .getByType(VersionCatalogsExtension::class.java)
         .named("libs")
-        .findBundle(commonMainBundleName)
-        .orElseThrow { GradleException("Missing libs bundle '$commonMainBundleName'") }
 
 // Opt-ins shared across Kotlin targets.
 val commonOptIns =
@@ -345,7 +343,13 @@ kotlin {
 
     sourceSets {
         commonMain.dependencies {
-            implementation(commonMainDependencyBundle)
+            if (commonMainBundleName.isNotBlank()) {
+                implementation(
+                    libsCatalog
+                        .findBundle(commonMainBundleName)
+                        .orElseThrow { GradleException("Missing libs bundle '$commonMainBundleName'") },
+                )
+            }
         }
         commonTest.dependencies {
             implementation(kotlin("test"))
@@ -547,6 +551,12 @@ tasks.register("hostTests") {
         "wasmWasiNodeTest",
         "testAndroidHostTest",
     )
+}
+
+tasks.register("test") {
+    group = "verification"
+    description = "Runs the documented local test gate, including Swift Export."
+    dependsOn("hostTests", "swiftExportSmokeTest")
 }
 
 // Swift Export smoke test — produces the SPM package via embedSwiftExportForXcode

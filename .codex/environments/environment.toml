@@ -170,6 +170,10 @@ FRAMEWORKS_FOLDER_PATH=Frameworks \
 MACOSX_DEPLOYMENT_TARGET=14.0 \
 DEPLOYMENT_TARGET_SETTING_NAME=MACOSX_DEPLOYMENT_TARGET \
   ./gradlew --no-daemon embedSwiftExportForXcode --no-configuration-cache
+PACKAGE_SWIFT="$CODEX_WORKTREE_PATH/build/SPMPackage/macosArm64/Debug/Package.swift"
+if [ -f "$PACKAGE_SWIFT" ] && ! grep -q 'platforms:' "$PACKAGE_SWIFT"; then
+  perl -0pi -e 's/(name:\s*"[^"]*",)/$1\n    platforms: [.macOS(.v14)],/' "$PACKAGE_SWIFT"
+fi
 (cd swift-test-harness && swift test)
 '''
 
