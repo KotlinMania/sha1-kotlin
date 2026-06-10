@@ -1,15 +1,25 @@
-# Dependabot configuration for sha1-kotlin.
+# Dependabot configuration.
 #
 # https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
 #
-# Covers two ecosystems present in this repo:
+# Covers three ecosystems present in this repo:
 #
 #   1. Gradle — kotlin-multiplatform plugin, kotlin-serialization plugin,
 #      android-kotlin-multiplatform-library plugin, vanniktech maven-publish,
 #      and the kotlinx-{coroutines,serialization,datetime,collections-immutable}
 #      runtime dependencies declared in build.gradle.kts.
 #
-#   2. GitHub Actions — the actions pinned across the workflow files in
+#   2. npm/Yarn — the checked-in Kotlin/JS dependency store under
+#      kotlin-js-store/. This is the source dependency manifest Gradle uses to
+#      produce JS/Wasm package outputs; the Wasm store currently has only a
+#      lockfile, not a package manifest Dependabot can scan directly.
+#      webpack lives in kotlin-js-store/package.json and is fully Dependabot-
+#      managed: build.gradle.kts reads the version out of that package.json to
+#      drive both the yarn resolution and the NodeJsRootExtension pin, so a
+#      Dependabot bump of the store is honored by the build instead of being
+#      overridden by a separate gradle.properties pin.
+#
+#   3. GitHub Actions — the actions pinned across the workflow files in
 #      .github/workflows/. Versions are not enumerated here: Dependabot reads
 #      them straight from the workflow files, and a hand-kept list in this
 #      comment would silently drift from the actual pins.
@@ -30,6 +40,18 @@ updates:
     labels:
       - "dependencies"
       - "gradle"
+
+  - package-ecosystem: npm
+    directories:
+      - "/kotlin-js-store"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "npm"
+      - "javascript"
+      - "wasm"
 
   - package-ecosystem: github-actions
     directory: "/"
