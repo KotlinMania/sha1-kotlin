@@ -37,11 +37,13 @@ val frameworkName = providers.gradleProperty("project.frameworkName").getOrElse(
 val projectNamespace = providers.gradleProperty("project.namespace").getOrElse("io.github.kotlinmania")
 val kotlinVersion = providers.gradleProperty("versions.kotlin").getOrElse("2.4.0")
 val isCodeqlBuild = providers.gradleProperty("kotlinmania.codeql").map(String::toBoolean).getOrElse(false)
-val commonMainBundleName = providers.gradleProperty("project.dependencies.commonMainBundle").getOrElse("")
-val libsCatalog =
+val commonMainBundleName = providers.gradleProperty("project.dependencies.commonMainBundle").get()
+val commonMainDependencyBundle =
     extensions
         .getByType(VersionCatalogsExtension::class.java)
         .named("libs")
+        .findBundle(commonMainBundleName)
+        .orElseThrow { GradleException("Missing libs bundle '$commonMainBundleName'") }
 
 // Opt-ins shared across Kotlin targets.
 val commonOptIns =
@@ -97,6 +99,7 @@ val requiredAndroidSdkPackageDirs =
     )
 
 fun writeAndroidLocalProperties() {
+    projectAndroidSdkDir.mkdirs()
     val sdkDirPropertyValue = projectAndroidSdkDir.absolutePath.replace("\\", "/")
     layout.projectDirectory
         .file("local.properties")
@@ -207,7 +210,7 @@ fun installProjectAndroidSdk(execOperations: ExecOperations) {
     println("setup-android-sdk: done; SDK at $projectAndroidSdkDir")
 }
 
-writeAndroidLocalProperties()
+installProjectAndroidSdk(serviceOf())
 
 val ensureAndroidSdk by tasks.registering {
     group = "setup"
@@ -343,21 +346,13 @@ kotlin {
 
     sourceSets {
         commonMain.dependencies {
-            if (commonMainBundleName.isNotBlank()) {
-                implementation(
-                    libsCatalog
-                        .findBundle(commonMainBundleName)
-                        .orElseThrow { GradleException("Missing libs bundle '$commonMainBundleName'") },
-                )
-            }
+            implementation(commonMainDependencyBundle)
         }
         commonTest.dependencies {
             implementation(kotlin("test"))
         }
     }
 }
-
-
 
 // ============================================================================
 // Test logging
@@ -551,12 +546,6 @@ tasks.register("hostTests") {
         "wasmWasiNodeTest",
         "testAndroidHostTest",
     )
-}
-
-tasks.register("test") {
-    group = "verification"
-    description = "Runs the documented local test gate, including Swift Export."
-    dependsOn("hostTests", "swiftExportSmokeTest")
 }
 
 // Swift Export smoke test — produces the SPM package via embedSwiftExportForXcode
