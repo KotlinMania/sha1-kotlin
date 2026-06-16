@@ -10,9 +10,10 @@
 #      runtime dependencies declared in build.gradle.kts.
 #
 #   2. npm/Yarn — the checked-in Kotlin/JS dependency store under
-#      kotlin-js-store/. This is the source dependency manifest Gradle uses to
-#      produce JS/Wasm package outputs; the Wasm store currently has only a
-#      lockfile, not a package manifest Dependabot can scan directly.
+#      kotlin-js-store/ plus the checked-in Wasm lock under
+#      kotlin-js-store/wasm/. These are the source dependency manifests Gradle
+#      uses to produce JS/Wasm package outputs, so they must be monitored
+#      separately from CodeQL's generated-output scan.
 #      webpack lives in kotlin-js-store/package.json and is fully Dependabot-
 #      managed: build.gradle.kts reads the version out of that package.json to
 #      drive both the yarn resolution and the NodeJsRootExtension pin, so a
@@ -44,6 +45,7 @@ updates:
   - package-ecosystem: npm
     directories:
       - "/kotlin-js-store"
+      - "/kotlin-js-store/wasm"
     schedule:
       interval: weekly
     open-pull-requests-limit: 10

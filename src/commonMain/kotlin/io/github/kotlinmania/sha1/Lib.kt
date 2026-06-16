@@ -30,13 +30,14 @@ import io.github.kotlinmania.sha1.compress.compress
 
 internal const val STATE_LEN: Int = 5
 
-internal val SHA1_INITIAL_STATE: UIntArray = uintArrayOf(
-    0x67452301u,
-    0xEFCDAB89u,
-    0x98BADCFEu,
-    0x10325476u,
-    0xC3D2E1F0u,
-)
+internal val SHA1_INITIAL_STATE: UIntArray =
+    uintArrayOf(
+        0x67452301u,
+        0xEFCDAB89u,
+        0x98BADCFEu,
+        0x10325476u,
+        0xC3D2E1F0u,
+    )
 
 internal const val SHA1_OUTPUT_SIZE: Int = 20
 
@@ -114,7 +115,9 @@ class Sha1Core {
 // methods. Kotlin does not have Rust type aliases over generic structs
 // with attached methods, so the wrapper is materialized as a thin class
 // holding a Sha1Core plus its own block buffer.
-class Sha1 private constructor(private val core: Sha1Core) {
+class Sha1 private constructor(
+    private val core: Sha1Core,
+) {
     private val buffer: ByteArray = ByteArray(BLOCK_SIZE)
     private var bufferPos: Int = 0
 
@@ -138,9 +141,10 @@ class Sha1 private constructor(private val core: Sha1Core) {
         }
         if (remaining >= BLOCK_SIZE) {
             val whole = remaining / BLOCK_SIZE
-            val blocks = Array(whole) { i ->
-                data.copyOfRange(offset + i * BLOCK_SIZE, offset + (i + 1) * BLOCK_SIZE)
-            }
+            val blocks =
+                Array(whole) { i ->
+                    data.copyOfRange(offset + i * BLOCK_SIZE, offset + (i + 1) * BLOCK_SIZE)
+                }
             core.updateBlocks(blocks)
             val consumed = whole * BLOCK_SIZE
             offset += consumed

@@ -169,28 +169,44 @@ private fun sha1DigestBlockU32(state: UIntArray, block: UIntArray) {
     h0 = rounds4(h1, h0, w1, 0)
     h1 = rounds4(h0, h1, w2, 0)
     h0 = rounds4(h1, h0, w3, 0)
-    w4 = schedule(w0, w1, w2, w3); h1 = rounds4(h0, h1, w4, 0)
+    w4 = schedule(w0, w1, w2, w3)
+    h1 = rounds4(h0, h1, w4, 0)
 
     // Rounds 20..40
-    w0 = schedule(w1, w2, w3, w4); h0 = rounds4(h1, h0, w0, 1)
-    w1 = schedule(w2, w3, w4, w0); h1 = rounds4(h0, h1, w1, 1)
-    w2 = schedule(w3, w4, w0, w1); h0 = rounds4(h1, h0, w2, 1)
-    w3 = schedule(w4, w0, w1, w2); h1 = rounds4(h0, h1, w3, 1)
-    w4 = schedule(w0, w1, w2, w3); h0 = rounds4(h1, h0, w4, 1)
+    w0 = schedule(w1, w2, w3, w4)
+    h0 = rounds4(h1, h0, w0, 1)
+    w1 = schedule(w2, w3, w4, w0)
+    h1 = rounds4(h0, h1, w1, 1)
+    w2 = schedule(w3, w4, w0, w1)
+    h0 = rounds4(h1, h0, w2, 1)
+    w3 = schedule(w4, w0, w1, w2)
+    h1 = rounds4(h0, h1, w3, 1)
+    w4 = schedule(w0, w1, w2, w3)
+    h0 = rounds4(h1, h0, w4, 1)
 
     // Rounds 40..60
-    w0 = schedule(w1, w2, w3, w4); h1 = rounds4(h0, h1, w0, 2)
-    w1 = schedule(w2, w3, w4, w0); h0 = rounds4(h1, h0, w1, 2)
-    w2 = schedule(w3, w4, w0, w1); h1 = rounds4(h0, h1, w2, 2)
-    w3 = schedule(w4, w0, w1, w2); h0 = rounds4(h1, h0, w3, 2)
-    w4 = schedule(w0, w1, w2, w3); h1 = rounds4(h0, h1, w4, 2)
+    w0 = schedule(w1, w2, w3, w4)
+    h1 = rounds4(h0, h1, w0, 2)
+    w1 = schedule(w2, w3, w4, w0)
+    h0 = rounds4(h1, h0, w1, 2)
+    w2 = schedule(w3, w4, w0, w1)
+    h1 = rounds4(h0, h1, w2, 2)
+    w3 = schedule(w4, w0, w1, w2)
+    h0 = rounds4(h1, h0, w3, 2)
+    w4 = schedule(w0, w1, w2, w3)
+    h1 = rounds4(h0, h1, w4, 2)
 
     // Rounds 60..80
-    w0 = schedule(w1, w2, w3, w4); h0 = rounds4(h1, h0, w0, 3)
-    w1 = schedule(w2, w3, w4, w0); h1 = rounds4(h0, h1, w1, 3)
-    w2 = schedule(w3, w4, w0, w1); h0 = rounds4(h1, h0, w2, 3)
-    w3 = schedule(w4, w0, w1, w2); h1 = rounds4(h0, h1, w3, 3)
-    w4 = schedule(w0, w1, w2, w3); h0 = rounds4(h1, h0, w4, 3)
+    w0 = schedule(w1, w2, w3, w4)
+    h0 = rounds4(h1, h0, w0, 3)
+    w1 = schedule(w2, w3, w4, w0)
+    h1 = rounds4(h0, h1, w1, 3)
+    w2 = schedule(w3, w4, w0, w1)
+    h0 = rounds4(h1, h0, w2, 3)
+    w3 = schedule(w4, w0, w1, w2)
+    h1 = rounds4(h0, h1, w3, 3)
+    w4 = schedule(w0, w1, w2, w3)
+    h0 = rounds4(h1, h0, w4, 3)
 
     val e = h1[0].rotateLeft(30)
     val a = h0[0]
@@ -216,9 +232,9 @@ internal fun compressSoft(state: UIntArray, blocks: Array<ByteArray>) {
         while (idx < blockU32.size) {
             blockU32[idx] =
                 (block[off].toUByte().toUInt() shl 24) or
-                    (block[off + 1].toUByte().toUInt() shl 16) or
-                    (block[off + 2].toUByte().toUInt() shl 8) or
-                    block[off + 3].toUByte().toUInt()
+                (block[off + 1].toUByte().toUInt() shl 16) or
+                (block[off + 2].toUByte().toUInt() shl 8) or
+                block[off + 3].toUByte().toUInt()
             idx++
             off += 4
         }
