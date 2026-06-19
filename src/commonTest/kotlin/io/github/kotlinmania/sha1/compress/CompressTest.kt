@@ -1,6 +1,3 @@
-// port-lint: ignore — Kotlin-side correctness test for the ported compression
-// function. No matching `.rs` source; the upstream behavior comes from
-// `tmp/sha1/src/compress/soft.rs` and standard SHA-1 test vectors.
 @file:OptIn(ExperimentalUnsignedTypes::class)
 
 package io.github.kotlinmania.sha1.compress

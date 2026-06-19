@@ -1,4 +1,4 @@
-// port-lint: source src/lib.rs
+// port-lint: source lib.rs
 @file:OptIn(ExperimentalUnsignedTypes::class)
 
 package io.github.kotlinmania.sha1
@@ -6,27 +6,9 @@ package io.github.kotlinmania.sha1
 import io.github.kotlinmania.sha1.compress.BLOCK_SIZE
 import io.github.kotlinmania.sha1.compress.compress
 
-// Pure Kotlin implementation of the SHA-1 cryptographic hash algorithm
-// (https://en.wikipedia.org/wiki/SHA-1).
-//
-// SHA-1 should be considered cryptographically broken and unsuitable for
-// further use in any security critical capacity, as it is practically
-// vulnerable to chosen-prefix collisions
-// (https://sha-mbles.github.io/). This module exists for legacy
-// interoperability purposes only.
-//
-// Usage:
-//
-//     val hasher = Sha1()
-//     hasher.update("hello world".encodeToByteArray())
-//     val result = hasher.finalize()
-//     // result content equals 2aae6c35c94fcfb415dbe95f408b9ce91ee846ed
-//
-// Upstream Rust re-exports the digest crate's Digest convenience trait
-// through pub use digest::{self, Digest}; the Kotlin port exposes the
-// equivalent operations directly on the Sha1 class below, since the
-// digest framework abstractions are translated separately under the
-// io.github.kotlinmania.digest package.
+// Pure Kotlin implementation of the SHA-1 cryptographic hash algorithm.
+// SHA-1 is cryptographically broken and unsuitable for security-sensitive
+// use; this module exists for legacy interoperability.
 
 internal const val STATE_LEN: Int = 5
 
@@ -41,10 +23,25 @@ internal val SHA1_INITIAL_STATE: UIntArray =
 
 internal const val SHA1_OUTPUT_SIZE: Int = 20
 
-// Core SHA-1 hasher state. Matches Sha1Core in upstream: holds the running
-// state h plus the count of compressed blocks. Upstream uses an Eager
-// block-buffer kind, modelled here by Sha1 below; Sha1Core itself only
-// consumes whole blocks.
+object BlockSize {
+    const val BYTES: Int = BLOCK_SIZE
+}
+
+object BufferKind {
+    const val EAGER: Boolean = true
+}
+
+object OutputSize {
+    const val BYTES: Int = SHA1_OUTPUT_SIZE
+}
+
+/**
+ * Core SHA-1 state.
+ *
+ * The core owns the five running words and the number of complete blocks that
+ * have already been compressed. It only accepts full 64-byte blocks; [Sha1]
+ * owns the partial block buffer and final padding.
+ */
 class Sha1Core {
     internal val h: UIntArray = SHA1_INITIAL_STATE.copyOf()
     internal var blockLen: ULong = 0u
@@ -52,24 +49,13 @@ class Sha1Core {
     internal val blockSize: Int get() = BLOCK_SIZE
     internal val outputSize: Int get() = SHA1_OUTPUT_SIZE
 
-    // BlockSizeUser, BufferKindUser, OutputSizeUser, HashMarker are marker
-    // associations on the Rust side; in Kotlin they collapse into the
-    // fixed blockSize/outputSize values above.
-
-    // UpdateCore: consume whole blocks. The caller is responsible for
-    // assembling 64-byte blocks; this matches the Rust signature
-    // update_blocks(&mut self, blocks: &[Block<Self>]).
+    // Consume whole 64-byte blocks. The caller owns partial-block buffering.
     fun updateBlocks(blocks: Array<ByteArray>) {
         blockLen += blocks.size.toULong()
         compress(h, blocks)
     }
 
-    // FixedOutputCore: apply MD-style padding and emit the final 20-byte
-    // digest. Upstream delegates the padding work to digest::Buffer's
-    // len64_padding_be helper; that helper is inlined here so this file
-    // does not require the digest-kotlin sibling. bufferPos is the number
-    // of bytes currently held in the caller's block buffer (0..63), and
-    // buffer holds those bytes in its first bufferPos slots.
+    // Apply SHA-style length padding and emit the final 20-byte digest.
     fun finalizeFixedCore(buffer: ByteArray, bufferPos: Int): ByteArray {
         val bs = blockSize.toULong()
         val bitLen: ULong = 8u * (bufferPos.toULong() + bs * blockLen)
@@ -86,15 +72,11 @@ class Sha1Core {
         return out
     }
 
-    // Reset: equivalent of impl Reset where *self = Default::default().
     fun reset() {
         SHA1_INITIAL_STATE.copyInto(h)
         blockLen = 0u
     }
 
-    // Clone semantics: Sha1Core derives Clone in upstream. Kotlin lacks
-    // automatic Clone; provide an explicit copy that produces an
-    // independent state.
     fun copy(): Sha1Core {
         val c = Sha1Core()
         h.copyInto(c.h)
@@ -102,19 +84,33 @@ class Sha1Core {
         return c
     }
 
-    // AlgorithmName: write_alg_name writes the literal "Sha1".
     fun writeAlgName(): String = "Sha1"
 
-    // The Rust Debug impl prints "Sha1Core { ... }".
-    override fun toString(): String = "Sha1Core { ... }"
+    fun fmt(): String = "Sha1Core { ... }"
+
+    override fun toString(): String = fmt()
+
+    companion object {
+        fun default(): Sha1Core = Sha1Core()
+    }
 }
 
-// SHA-1 hasher state. Upstream defines this as
-// pub type Sha1 = CoreWrapper<Sha1Core>; the wrapper from the digest crate
-// adds a 64-byte Eager block buffer plus convenience update/finalize/reset
-// methods. Kotlin does not have Rust type aliases over generic structs
-// with attached methods, so the wrapper is materialized as a thin class
-// holding a Sha1Core plus its own block buffer.
+/**
+ * SHA-1 hasher state.
+ *
+ * SHA-1 is retained for legacy interoperability only. New security-sensitive
+ * code should use a stronger hash. Instances support streaming updates,
+ * one-shot hashing through [digest], explicit reset, and finalize-and-reset
+ * reuse through [finalizeReset].
+ *
+ * Example:
+ *
+ * ```
+ * val hasher = Sha1.new()
+ * hasher.update("hello world".encodeToByteArray())
+ * val output = hasher.finalize()
+ * ```
+ */
 class Sha1 private constructor(
     private val core: Sha1Core,
 ) {
@@ -123,8 +119,7 @@ class Sha1 private constructor(
 
     constructor() : this(Sha1Core())
 
-    // Update the hash state with the given input bytes. Equivalent to
-    // Digest::update on the upstream CoreWrapper.
+    // Update the hash state with the given input bytes.
     fun update(data: ByteArray) {
         var offset = 0
         var remaining = data.size
@@ -156,13 +151,10 @@ class Sha1 private constructor(
         }
     }
 
-    // Acquire the hash digest. Consumes the hasher in upstream
-    // (CoreWrapper::finalize takes self by value); Kotlin returns the
-    // digest and leaves the hasher in a finalized state. Call reset to
-    // re-use the instance, mirroring finalize_reset.
+    // Acquire the hash digest.
     fun finalize(): ByteArray = core.finalizeFixedCore(buffer, bufferPos)
 
-    // Finalize and reset, matching CoreWrapper's finalize_reset path.
+    // Finalize and reset for instance reuse.
     fun finalizeReset(): ByteArray {
         val out = core.finalizeFixedCore(buffer, bufferPos)
         core.reset()
@@ -171,7 +163,6 @@ class Sha1 private constructor(
         return out
     }
 
-    // Reset the hasher to its initial state.
     fun reset() {
         core.reset()
         buffer.fill(0)
@@ -182,12 +173,9 @@ class Sha1 private constructor(
     val outputSize: Int get() = SHA1_OUTPUT_SIZE
 
     companion object {
-        // Equivalent of Digest::new — create a fresh hasher in its
-        // initial state.
         fun new(): Sha1 = Sha1()
 
-        // One-shot convenience matching the Rust Digest::digest helper:
-        // hash data in one call and return the 20-byte output.
+        // One-shot convenience: hash data in one call and return the digest.
         fun digest(data: ByteArray): ByteArray {
             val h = Sha1()
             h.update(data)
@@ -196,12 +184,8 @@ class Sha1 private constructor(
     }
 }
 
-// Apply Merkle-Damgård length-64 padding in big-endian form. Equivalent to
-// digest::block_buffer::Buffer::len64_padding_be on the Rust side: write
-// 0x80 immediately after the buffered bytes, zero-pad until the trailing
-// 8 bytes of the final block, then write the 64-bit big-endian bit length
-// and emit one or two completed 64-byte blocks through the supplied
-// compressor.
+// Apply Merkle-Damgård length padding in big-endian form and emit one or two
+// completed 64-byte blocks through the supplied compressor.
 private inline fun len64PaddingBe(
     buffer: ByteArray,
     bufferPos: Int,
@@ -212,15 +196,11 @@ private inline fun len64PaddingBe(
     buffer.copyInto(block, 0, 0, bufferPos)
     block[bufferPos] = 0x80.toByte()
     if (bufferPos < BLOCK_SIZE - 8) {
-        // Length fits in the trailing 8 bytes of this same block.
         for (i in 0 until 8) {
             block[BLOCK_SIZE - 1 - i] = ((bitLen shr (i * 8)) and 0xFFu).toByte()
         }
         compressor(block)
     } else {
-        // Need a second block. Emit the current one with only the 0x80
-        // marker plus zero padding, then a fresh block carrying the
-        // 64-bit length tail.
         compressor(block)
         val tail = ByteArray(BLOCK_SIZE)
         for (i in 0 until 8) {

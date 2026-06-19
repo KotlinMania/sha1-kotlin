@@ -1,7 +1,3 @@
-// port-lint: ignore — Kotlin-side correctness test for the Sha1 hasher
-// API. Upstream behavior comes from tests/mod.rs plus the FIPS 180-2
-// SHA-1 reference vectors invoked through digest::dev::fixed_reset_test.
-
 package io.github.kotlinmania.sha1
 
 import kotlin.test.Test
