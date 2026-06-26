@@ -1,34 +1,60 @@
+import groovy.json.JsonSlurper
 import org.gradle.api.GradleException
 import org.gradle.api.artifacts.VersionCatalogsExtension
+import org.gradle.api.file.RegularFile
+import org.gradle.api.provider.Provider
+import org.gradle.api.publish.maven.MavenPublication
+import org.gradle.api.publish.maven.tasks.PublishToMavenRepository
+import org.gradle.api.tasks.Exec
 import org.gradle.api.tasks.testing.AbstractTestTask
 import org.gradle.api.tasks.testing.logging.TestExceptionFormat
 import org.gradle.api.tasks.testing.logging.TestLogEvent
 import org.gradle.kotlin.dsl.support.serviceOf
+import org.gradle.language.cpp.tasks.CppCompile
+import org.gradle.nativeplatform.Linkage
+import org.gradle.nativeplatform.platform.NativePlatform
+import org.gradle.nativeplatform.tasks.CreateStaticLibrary
+import org.gradle.plugins.signing.Sign
 import org.gradle.process.ExecOperations
 import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
+import org.jetbrains.kotlin.gradle.plugin.KotlinTarget
 import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
 import org.jetbrains.kotlin.gradle.plugin.mpp.apple.XCFramework
 import org.jetbrains.kotlin.gradle.targets.js.nodejs.NodeJsEnvSpec
 import org.jetbrains.kotlin.gradle.targets.js.nodejs.NodeJsRootExtension
+import org.jetbrains.kotlin.gradle.targets.js.testing.KotlinJsTest
+import org.jetbrains.kotlin.gradle.targets.js.testing.mocha.KotlinMocha
 import org.jetbrains.kotlin.gradle.targets.js.yarn.YarnRootEnvSpec
 import org.jetbrains.kotlin.gradle.targets.js.yarn.YarnRootExtension
 import org.jetbrains.kotlin.gradle.targets.wasm.nodejs.WasmNodeJsEnvSpec
 import org.jetbrains.kotlin.gradle.targets.wasm.yarn.WasmYarnRootEnvSpec
 import java.io.ByteArrayInputStream
 import java.net.URI
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.util.Base64
+import java.util.UUID
 import java.util.zip.ZipInputStream
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.android.kmp)
-    alias(libs.plugins.vanniktech)
     alias(libs.plugins.detekt)
     alias(libs.plugins.ktlint)
+    alias(libs.plugins.kotlinx.benchmark)
+    alias(libs.plugins.kotlin.allopen)
+    `cpp-library`
+    // First-party publishing. The convenience publishing plugin rejects
+    // cpp-library's native publication at configuration time. maven-publish
+    // coexists with cpp-library; Central Portal upload is a bespoke task.
+    `maven-publish`
+    signing
 }
 
 group = providers.gradleProperty("project.group").getOrElse("io.github.kotlinmania")
@@ -44,6 +70,70 @@ val commonMainDependencyBundle =
         .named("libs")
         .findBundle(commonMainBundleName)
         .orElseThrow { GradleException("Missing libs bundle '$commonMainBundleName'") }
+
+fun csvProperty(name: String): Set<String> =
+    providers
+        .gradleProperty(name)
+        .map { value ->
+            value
+                .split(",")
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .toSet()
+        }.getOrElse(emptySet())
+
+fun optionalTrimmedProperty(name: String): String? =
+    providers
+        .gradleProperty(name)
+        .map { it.trim() }
+        .orNull
+        ?.takeIf { it.isNotEmpty() }
+
+val enabledFeatureNames = csvProperty("project.features")
+val benchmarkEnabled = "benchmark" in enabledFeatureNames
+val benchmarkTargetNames = csvProperty("project.benchmark.targets")
+val commonTestBundleName = optionalTrimmedProperty("project.dependencies.commonTestBundle")
+val commonTestDependencyBundle =
+    commonTestBundleName?.let { bundleName ->
+        extensions
+            .getByType(VersionCatalogsExtension::class.java)
+            .named("libs")
+            .findBundle(bundleName)
+            .orElseThrow { GradleException("Missing libs bundle '$bundleName'") }
+    }
+val commonBenchmarkBundleName = optionalTrimmedProperty("project.dependencies.commonBenchmarkBundle")
+val commonBenchmarkDependencyBundle =
+    commonBenchmarkBundleName?.let { bundleName ->
+        extensions
+            .getByType(VersionCatalogsExtension::class.java)
+            .named("libs")
+            .findBundle(bundleName)
+            .orElseThrow { GradleException("Missing libs bundle '$bundleName'") }
+    }
+if (benchmarkEnabled && commonBenchmarkDependencyBundle == null) {
+    throw GradleException("Feature 'benchmark' requires project.dependencies.commonBenchmarkBundle")
+}
+val benchmarkWarmups = providers.gradleProperty("project.benchmark.warmups").map { it.toInt() }.getOrElse(3)
+val benchmarkIterations = providers.gradleProperty("project.benchmark.iterations").map { it.toInt() }.getOrElse(5)
+val benchmarkIterationTime = providers.gradleProperty("project.benchmark.iterationTime").map { it.toLong() }.getOrElse(1L)
+val benchmarkIterationTimeUnit = providers.gradleProperty("project.benchmark.iterationTimeUnit").getOrElse("s")
+val intellijCoroutinesVersion =
+    providers.gradleProperty("versions.intellij.coroutines").getOrElse("1.10.2-intellij-1")
+
+// KGP runs Swift Export in an isolated worker whose classpath is
+// `swiftExportClasspath`. Adding a dependency disables KGP's default
+// dependency population, so keep the default embeddable runner explicit too.
+val projectDependencyHandler = project.dependencies
+configurations.configureEach {
+    if (name == "swiftExportClasspath") {
+        dependencies.add(projectDependencyHandler.create("org.jetbrains.kotlin:swift-export-embeddable:$kotlinVersion"))
+        dependencies.add(
+            projectDependencyHandler.create(
+                "org.jetbrains.intellij.deps.kotlinx:kotlinx-coroutines-core-jvm:$intellijCoroutinesVersion",
+            ),
+        )
+    }
+}
 
 // Opt-ins shared across Kotlin targets.
 val commonOptIns =
@@ -210,7 +300,36 @@ fun installProjectAndroidSdk(execOperations: ExecOperations) {
     println("setup-android-sdk: done; SDK at $projectAndroidSdkDir")
 }
 
-installProjectAndroidSdk(serviceOf())
+// ----------------------------------------------------------------------------
+// Android SDK setup is gated to follow the requested task. It must never run for
+// non-Android invocations (jsTest, jvmTest, swiftExportSmokeTest, native /
+// androidNative links) -- an unconditional install here is what made the SDK
+// download appear on every machine and target.
+//
+// `writeAndroidLocalProperties()` always runs: it is cheap, hits no network, and
+// only points local.properties at the project-local .android-sdk so AGP can
+// resolve `sdk.dir` while the `androidLibrary {}` block evaluates.
+//
+// The SDK *package* download must happen at configuration time when -- and only
+// when -- an Android task is in the requested build. AGP validates the packages
+// while determining the dependencies of `compileAndroidMain` (task-graph
+// construction, strictly before any task executes), so a plain `dependsOn`
+// cannot supply them in time. We detect Android intent from the requested task
+// names and install eagerly in that case. androidNative* are Kotlin/Native
+// targets and need no Android SDK.
+// ----------------------------------------------------------------------------
+writeAndroidLocalProperties()
+
+fun requestedTaskWantsAndroid(rawTaskName: String): Boolean {
+    val taskName = rawTaskName.substringAfterLast(':')
+    if (taskName.contains("AndroidNative")) return false // Kotlin/Native, no SDK
+    if (taskName.contains("Android")) return true // direct AGP tasks
+    return taskName in setOf("build", "assemble", "check") // aggregates pull android
+}
+
+if (gradle.startParameter.taskNames.any(::requestedTaskWantsAndroid)) {
+    installProjectAndroidSdk(serviceOf())
+}
 
 val ensureAndroidSdk by tasks.registering {
     group = "setup"
@@ -221,9 +340,17 @@ val ensureAndroidSdk by tasks.registering {
     }
 }
 
-tasks.matching { it.name == "compileAndroidMain" }.configureEach {
-    dependsOn(ensureAndroidSdk)
-}
+// Secondary net: order every AGP Android task after the installer (a no-op on
+// warm runs). Excludes androidNative* (Kotlin/Native) and the installer itself.
+tasks
+    .matching { task ->
+        val taskName = task.name
+        taskName != "ensureAndroidSdk" &&
+            taskName.contains("Android") &&
+            !taskName.contains("AndroidNative")
+    }.configureEach {
+        dependsOn(ensureAndroidSdk)
+    }
 
 // Gap #9b: KGP-generated bridge boilerplate and KotlinCoroutineSupport runtime
 // produce warnings (unchecked casts, unused expressions, opt-in requirements)
@@ -247,8 +374,189 @@ val jvmToolchainVersion = providers.gradleProperty("jvm.toolchain").getOrElse("2
 //   target surface, so there are NO opt-in build gates. The build gate is the
 //   contract that forces every current KotlinMania target to compile.
 // ============================================================================
+
+// ============================================================================
+// SHA-1 Assembly Wrapper Compilation for Native Interop
+// ----------------------------------------------------------------------------
+// Gradle's cpp-library plugin compiles the sha1_asm wrapper as a static library,
+// which cinterop then bundles into the produced klib. Source lives in
+// src/nativeInterop/cinterop (not the plugin default src/main/cpp), so the
+// source/header dirs are set explicitly. STATIC linkage gives cinterop a
+// libsha1_asm.a to bundle (no runtime .dylib dependency).
+// ============================================================================
+library {
+    baseName.set("sha1_asm")
+
+    // Source files
+    source.from(file("src/nativeInterop/cinterop/sha1_asm_wrapper.cpp"))
+
+    // Private headers
+    privateHeaders.from(file("src/nativeInterop/cinterop"))
+
+    // Static linkage so cinterop can bundle the archive directly.
+    linkage.set(listOf(Linkage.STATIC))
+
+    // Declare every host-native machine our CI runners cover. Gradle's
+    // cpp-library plugin CANNOT cross-compile — it only builds the variant
+    // matching the build host and creates no tasks for the others. So the
+    // macOS runner builds macОS, the Linux runner builds Linux, the Windows
+    // runner builds Windows; each is a host-native compile, never a cross.
+    // (Ref: Gradle cpp_library_plugin docs — cross-compilation unsupported.)
+    targetMachines.set(
+        listOf(
+            machines.macOS.architecture("aarch64"),
+            machines.macOS.x86_64,
+            machines.linux.x86_64,
+            machines.linux.architecture("aarch64"),
+            machines.windows.x86_64,
+        ),
+    )
+}
+
+val sha1AsmSourceDir = layout.projectDirectory.dir("src/nativeInterop/cinterop/asm")
+
+fun sha1AssemblySourceFor(platform: NativePlatform): File? {
+    val arch = platform.architecture.name.lowercase()
+    val os = platform.operatingSystem
+    return when {
+        os.isMacOsX && "aarch64" in arch -> sha1AsmSourceDir.file("aarch64_apple.S").asFile
+        os.isLinux && "aarch64" in arch -> sha1AsmSourceDir.file("aarch64.S").asFile
+        !os.isWindows && "x86" in arch && "64" in arch -> sha1AsmSourceDir.file("x64.S").asFile
+        else -> null
+    }
+}
+
+data class Sha1AsmVariant(
+    val staticLibraryTaskName: String,
+    val compileTaskName: String,
+    val sourcePath: String,
+    val compiler: String,
+    val compilerArgs: List<String>,
+)
+
+val sha1AsmVariants =
+    listOf(
+        Sha1AsmVariant(
+            staticLibraryTaskName = "createDebugMacosAarch64",
+            compileTaskName = "compileDebugMacosAarch64Sha1Asm",
+            sourcePath = "src/nativeInterop/cinterop/asm/aarch64_apple.S",
+            compiler = "clang",
+            compilerArgs = listOf("-c", "-x", "assembler-with-cpp", "-fPIC", "-arch", "arm64", "-march=armv8-a+crypto"),
+        ),
+        Sha1AsmVariant(
+            staticLibraryTaskName = "createReleaseMacosAarch64",
+            compileTaskName = "compileReleaseMacosAarch64Sha1Asm",
+            sourcePath = "src/nativeInterop/cinterop/asm/aarch64_apple.S",
+            compiler = "clang",
+            compilerArgs = listOf("-c", "-x", "assembler-with-cpp", "-fPIC", "-arch", "arm64", "-march=armv8-a+crypto"),
+        ),
+        Sha1AsmVariant(
+            staticLibraryTaskName = "createDebugMacosX86-64",
+            compileTaskName = "compileDebugMacosX86-64Sha1Asm",
+            sourcePath = "src/nativeInterop/cinterop/asm/x64.S",
+            compiler = "clang",
+            compilerArgs = listOf("-c", "-x", "assembler-with-cpp", "-fPIC", "-arch", "x86_64"),
+        ),
+        Sha1AsmVariant(
+            staticLibraryTaskName = "createReleaseMacosX86-64",
+            compileTaskName = "compileReleaseMacosX86-64Sha1Asm",
+            sourcePath = "src/nativeInterop/cinterop/asm/x64.S",
+            compiler = "clang",
+            compilerArgs = listOf("-c", "-x", "assembler-with-cpp", "-fPIC", "-arch", "x86_64"),
+        ),
+        Sha1AsmVariant(
+            staticLibraryTaskName = "createDebugLinuxAarch64",
+            compileTaskName = "compileDebugLinuxAarch64Sha1Asm",
+            sourcePath = "src/nativeInterop/cinterop/asm/aarch64.S",
+            compiler = providers.environmentVariable("CC").getOrElse("cc"),
+            compilerArgs = listOf("-c", "-x", "assembler-with-cpp", "-fPIC", "-march=armv8-a+crypto"),
+        ),
+        Sha1AsmVariant(
+            staticLibraryTaskName = "createReleaseLinuxAarch64",
+            compileTaskName = "compileReleaseLinuxAarch64Sha1Asm",
+            sourcePath = "src/nativeInterop/cinterop/asm/aarch64.S",
+            compiler = providers.environmentVariable("CC").getOrElse("cc"),
+            compilerArgs = listOf("-c", "-x", "assembler-with-cpp", "-fPIC", "-march=armv8-a+crypto"),
+        ),
+        Sha1AsmVariant(
+            staticLibraryTaskName = "createDebugLinuxX86-64",
+            compileTaskName = "compileDebugLinuxX86-64Sha1Asm",
+            sourcePath = "src/nativeInterop/cinterop/asm/x64.S",
+            compiler = providers.environmentVariable("CC").getOrElse("cc"),
+            compilerArgs = listOf("-c", "-x", "assembler-with-cpp", "-fPIC"),
+        ),
+        Sha1AsmVariant(
+            staticLibraryTaskName = "createReleaseLinuxX86-64",
+            compileTaskName = "compileReleaseLinuxX86-64Sha1Asm",
+            sourcePath = "src/nativeInterop/cinterop/asm/x64.S",
+            compiler = providers.environmentVariable("CC").getOrElse("cc"),
+            compilerArgs = listOf("-c", "-x", "assembler-with-cpp", "-fPIC"),
+        ),
+    )
+
+data class Sha1AsmObjectTask(
+    val taskName: String,
+    val objectFile: Provider<RegularFile>,
+)
+
+val sha1AsmObjectTasksByStaticLibraryTask =
+    sha1AsmVariants.associate { variant ->
+        val sourceFile = layout.projectDirectory.file(variant.sourcePath)
+        val objectFile = layout.buildDirectory.file("obj/${variant.compileTaskName}/sha1_compress.o")
+        tasks.register<Exec>(variant.compileTaskName) {
+            inputs.file(sourceFile)
+            outputs.file(objectFile)
+            executable = variant.compiler
+            doFirst {
+                val output = objectFile.get().asFile
+                output.parentFile.mkdirs()
+                setArgs(variant.compilerArgs + listOf(sourceFile.asFile.absolutePath, "-o", output.absolutePath))
+            }
+        }
+        variant.staticLibraryTaskName to Sha1AsmObjectTask(variant.compileTaskName, objectFile)
+    }
+
+tasks.withType<CppCompile>().configureEach {
+    compilerArgs.addAll("-std=c++17", "-fPIC")
+    compilerArgs.addAll(
+        targetPlatform.map { platform ->
+            if (sha1AssemblySourceFor(platform) != null) listOf("-DSHA1_KOTLIN_HAS_UPSTREAM_ASM") else emptyList()
+        },
+    )
+
+    // Platform-specific args, resolved lazily — the plugin sets targetPlatform
+    // after this configureEach runs, so querying it eagerly fails.
+    compilerArgs.addAll(
+        targetPlatform.map { platform ->
+            if (platform.operatingSystem.isMacOsX) listOf("-stdlib=libc++") else emptyList()
+        },
+    )
+}
+
+tasks.withType<CreateStaticLibrary>().configureEach {
+    val asmObjectTask = sha1AsmObjectTasksByStaticLibraryTask[name] ?: return@configureEach
+    dependsOn(tasks.named(asmObjectTask.taskName))
+    source(files(asmObjectTask.objectFile).builtBy(tasks.named(asmObjectTask.taskName)))
+}
+
+// Ensure the static library is built before any cinterop task runs.
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.CInteropProcess>().configureEach {
+    dependsOn(tasks.withType<CreateStaticLibrary>())
+}
+
+// ============================================================================
 kotlin {
     jvmToolchain(jvmToolchainVersion)
+
+    // Configure cinterop for the host-native target built by the cpp-library plugin.
+    targets.withType<KotlinNativeTarget>().matching { it.name.startsWith("macos") }.configureEach {
+        compilations.getByName("main") {
+            cinterops.create("sha1Asm") {
+                defFile = project.file("src/nativeInterop/cinterop/sha1_asm.def")
+                includeDirs(project.file("src/nativeInterop/cinterop"))
+            }
+        }
+    }
 
     applyDefaultHierarchyTemplate()
 
@@ -273,33 +581,70 @@ kotlin {
         }
     }
 
+    fun KotlinTarget.configureBenchmarkCompilation() {
+        if (!benchmarkEnabled || name !in benchmarkTargetNames) return
+        val mainCompilation = compilations.getByName("main")
+        compilations.create("benchmark") {
+            associateWith(mainCompilation)
+            defaultSourceSet.dependencies {
+                implementation(commonBenchmarkDependencyBundle!!)
+            }
+        }
+    }
+
     // Apple — Tier 1/2 targets
-    macosArm64 { addToXcf() }
-    iosArm64 { addToXcf(static = true) }
-    iosSimulatorArm64 { addToXcf(static = true) }
-    tvosArm64 { addToXcf() }
-    tvosSimulatorArm64 { addToXcf() }
-    watchosArm64 { addToXcf() }
-    watchosDeviceArm64 { addToXcf() }
-    watchosSimulatorArm64 { addToXcf() }
+    macosArm64 {
+        configureBenchmarkCompilation()
+        addToXcf()
+    }
+    iosArm64 {
+        configureBenchmarkCompilation()
+        addToXcf(static = true)
+    }
+    iosSimulatorArm64 {
+        configureBenchmarkCompilation()
+        addToXcf(static = true)
+    }
+    tvosArm64 {
+        configureBenchmarkCompilation()
+        addToXcf()
+    }
+    tvosSimulatorArm64 {
+        configureBenchmarkCompilation()
+        addToXcf()
+    }
+    watchosArm64 {
+        configureBenchmarkCompilation()
+        addToXcf()
+    }
+    watchosDeviceArm64 {
+        configureBenchmarkCompilation()
+        addToXcf()
+    }
+    watchosSimulatorArm64 {
+        configureBenchmarkCompilation()
+        addToXcf()
+    }
 
     // iosX64: Intel Mac simulator. Tier 3 in Kotlin/Native but NOT deprecated —
     // Apple still ships x86_64 iOS simulator runtimes, so it is always built.
-    iosX64 { addToXcf(static = true) }
+    iosX64 {
+        configureBenchmarkCompilation()
+        addToXcf(static = true)
+    }
 
     // Other native — Tier 1/2
-    linuxX64()
-    linuxArm64()
-    mingwX64()
+    linuxX64 { configureBenchmarkCompilation() }
+    linuxArm64 { configureBenchmarkCompilation() }
+    mingwX64 { configureBenchmarkCompilation() }
 
-    // Android NDK — always built (full target surface, no opt-in gate).
-    androidNativeArm32()
-    androidNativeArm64()
-    androidNativeX86()
-    androidNativeX64()
+    // Android NDK — always built for supported 64-bit targets.
+    androidNativeArm64 { configureBenchmarkCompilation() }
+    androidNativeX64 { configureBenchmarkCompilation() }
 
     // Web
     js {
+        configureBenchmarkCompilation()
         browser()
         nodejs()
     }
@@ -307,12 +652,14 @@ kotlin {
     // wasmJs is Stable as of Kotlin 2.2; @OptIn may be removable — verify before dropping on wasmWasi.
     @OptIn(ExperimentalWasmDsl::class)
     wasmJs {
+        configureBenchmarkCompilation()
         browser()
         nodejs()
     }
 
     @OptIn(ExperimentalWasmDsl::class)
     wasmWasi {
+        configureBenchmarkCompilation()
         nodejs()
     }
 
@@ -339,6 +686,7 @@ kotlin {
 
     // JVM — jvmTarget derived from the same toolchain property so they can't drift.
     jvm {
+        configureBenchmarkCompilation()
         compilerOptions {
             jvmTarget.set(JvmTarget.fromTarget(jvmToolchainVersion.toString()))
         }
@@ -350,6 +698,39 @@ kotlin {
         }
         commonTest.dependencies {
             implementation(kotlin("test"))
+            commonTestDependencyBundle?.let { implementation(it) }
+        }
+        if (benchmarkEnabled) {
+            val commonBenchmark = maybeCreate("commonBenchmark")
+            commonBenchmark.dependencies {
+                implementation(commonBenchmarkDependencyBundle!!)
+            }
+            benchmarkTargetNames.forEach { targetName ->
+                findByName("${targetName}Benchmark")?.dependsOn(commonBenchmark)
+            }
+        }
+    }
+}
+
+allOpen {
+    annotation("org.openjdk.jmh.annotations.State")
+    annotation("kotlinx.benchmark.State")
+}
+
+if (benchmarkEnabled) {
+    benchmark {
+        targets {
+            benchmarkTargetNames.forEach { targetName ->
+                register("${targetName}Benchmark")
+            }
+        }
+        configurations {
+            named("main") {
+                warmups = benchmarkWarmups
+                iterations = benchmarkIterations
+                iterationTime = benchmarkIterationTime
+                iterationTimeUnit = benchmarkIterationTimeUnit
+            }
         }
     }
 }
@@ -372,6 +753,14 @@ tasks.withType<AbstractTestTask>().configureEach {
         showExceptions = true
         showStackTraces = true
         showStandardStreams = true
+    }
+}
+
+tasks.withType<KotlinJsTest>().configureEach {
+    onTestFrameworkSet {
+        if (this is KotlinMocha) {
+            timeout = "30s"
+        }
     }
 }
 
@@ -412,17 +801,27 @@ ktlint {
     }
 }
 
+if (benchmarkEnabled) {
+    tasks
+        .withType<io.gitlab.arturbosch.detekt.Detekt>()
+        .matching {
+            it.name.contains("BenchmarkBenchmark")
+        }.configureEach {
+            enabled = false
+        }
+
+    tasks
+        .matching {
+            it.name.startsWith("runKtlintCheckOver") && it.name.endsWith("BenchmarkBenchmarkSourceSet")
+        }.configureEach {
+            enabled = false
+        }
+}
+
 tasks.named("check") {
     dependsOn(tasks.withType<io.gitlab.arturbosch.detekt.Detekt>())
     dependsOn(tasks.named("ktlintCheck"))
-    // Android host unit tests run here alongside the tests that check -> allTests
-    // already executes (jvm, macosArm64, the Apple simulators, js, wasmJs,
-    // wasmWasi). Test EXECUTION belongs to check; target BUILD coverage belongs
-    // to the explicit all-target build set below.
-    dependsOn("testAndroidHostTest")
-    dependsOn("hostTests")
-    // Swift Export smoke test is required; it must not self-skip.
-    dependsOn("swiftExportSmokeTest")
+    dependsOn("test")
 }
 
 // ============================================================================
@@ -483,48 +882,238 @@ rootProject.extensions.configure<NodeJsRootExtension>("kotlinNodeJs") {
 }
 
 // ============================================================================
-// Maven Central publishing
+// Maven Central publishing — Central Portal, first-party + bespoke upload
+// ----------------------------------------------------------------------------
+// OSSRH was sunset 2025-06-30; the Central Portal is the only path. Sonatype
+// ships no first-party Gradle plugin, so we use Gradle's own maven-publish +
+// signing (KGP populates the KMP publications) and upload the deployment
+// bundle to the Portal API ourselves. No convenience plugin = no clash with
+// cpp-library's native publication.
+//
+// Flow: publish all KMP publications into a local staging Maven layout ->
+// zip it -> POST the zip to the Portal upload endpoint with a Bearer token.
 // ============================================================================
-mavenPublishing {
-    publishToMavenCentral()
-    if (project.findProperty("RELEASE_SIGNING_ENABLED") != "false") {
-        signAllPublications()
+val publishProjectName = providers.gradleProperty("project.name").getOrElse("unnamed-project")
+
+// Central requires a Javadoc jar per publication; KMP produces none, so attach
+// an empty one to every Maven publication.
+val emptyJavadocJar by tasks.registering(Jar::class) {
+    archiveClassifier.set("javadoc")
+}
+
+// The cpp-library plugin registers a native publication named "main" (artifactId
+// sha1_asm). It is internal tooling consumed by cinterop — never shipped
+// to Maven Central — so it is excluded from POM config, staging, and the bundle.
+val cppLibraryPublicationName = "main"
+
+publishing {
+    publications.withType<MavenPublication>().matching { !it.name.startsWith(cppLibraryPublicationName) }.configureEach {
+        artifact(emptyJavadocJar)
+        pom {
+            name.set(publishProjectName)
+            description.set(providers.gradleProperty("project.pom.description").getOrElse(""))
+            inceptionYear.set("2026")
+            url.set("https://github.com/KotlinMania/$publishProjectName")
+            licenses {
+                license {
+                    name.set(providers.gradleProperty("project.pom.licenseName").getOrElse("MIT"))
+                    url.set(
+                        providers
+                            .gradleProperty("project.pom.licenseUrl")
+                            .getOrElse("https://opensource.org/licenses/MIT"),
+                    )
+                    distribution.set("repo")
+                }
+            }
+            developers {
+                developer {
+                    id.set("sydneyrenee")
+                    name.set("Sydney Renee")
+                    email.set("sydney@solace.ofharmony.ai")
+                    url.set("https://github.com/sydneyrenee")
+                }
+            }
+            scm {
+                url.set("https://github.com/KotlinMania/$publishProjectName")
+                connection.set("scm:git:git://github.com/KotlinMania/$publishProjectName.git")
+                developerConnection.set("scm:git:ssh://github.com/KotlinMania/$publishProjectName.git")
+            }
+        }
     }
-    val projectName = providers.gradleProperty("project.name").getOrElse("unnamed-project")
-    coordinates(group.toString(), projectName, version.toString())
-    pom {
-        name.set(projectName)
-        description.set(providers.gradleProperty("project.pom.description").getOrElse(""))
-        inceptionYear.set("2026")
-        url.set("https://github.com/KotlinMania/$projectName")
-        licenses {
-            license {
-                name.set(providers.gradleProperty("project.pom.licenseName").getOrElse("MIT"))
-                url.set(
-                    providers.gradleProperty("project.pom.licenseUrl").getOrElse("https://opensource.org/licenses/MIT"),
-                )
-                distribution.set("repo")
+
+    // Stage into a local Maven layout that becomes the Portal deployment bundle.
+    // maven-publish auto-generates the md5/sha1/sha256/sha512 checksums Central
+    // requires; signing (below) adds the .asc signatures.
+    repositories {
+        maven {
+            name = "centralPortalStaging"
+            url = uri(layout.buildDirectory.dir("staging-deploy"))
+        }
+    }
+}
+
+signing {
+    val signingKey = providers.gradleProperty("signingInMemoryKey").orNull
+    val signingKeyId = providers.gradleProperty("signingInMemoryKeyId").orNull
+    val signingPassword = providers.gradleProperty("signingInMemoryKeyPassword").orNull
+    val signingEnabled = project.findProperty("RELEASE_SIGNING_ENABLED") != "false" && signingKey != null
+    if (signingEnabled) {
+        useInMemoryPgpKeys(signingKeyId, signingKey, signingPassword)
+        sign(publishing.publications.matching { !it.name.startsWith(cppLibraryPublicationName) })
+    }
+}
+
+val centralPortalPublishTasks =
+    tasks.withType<PublishToMavenRepository>().matching {
+        it.name.endsWith("ToCentralPortalStagingRepository") && !it.name.startsWith("publishMain")
+    }
+
+centralPortalPublishTasks.configureEach {
+    dependsOn(tasks.withType<Sign>())
+}
+
+// Never stage/publish the C++ wrapper publication to Maven Central.
+tasks
+    .matching {
+        it.name.startsWith("publishMain") && it.name.contains("Publication")
+    }.configureEach { enabled = false }
+
+// Zip the staged Maven layout into a single Central Portal deployment bundle.
+val centralPortalBundle by tasks.registering(Zip::class) {
+    group = "publishing"
+    description = "Bundles the staged Maven artifacts into a Central Portal deployment zip."
+    dependsOn(centralPortalPublishTasks)
+    from(layout.buildDirectory.dir("staging-deploy"))
+    archiveFileName.set("$publishProjectName-$version-bundle.zip")
+    destinationDirectory.set(layout.buildDirectory.dir("central-portal"))
+}
+
+// Upload the bundle to the Sonatype Central Portal Publisher API.
+// publishingType: USER_MANAGED (default, safe — validates then waits for a
+// manual release in the Portal UI) or AUTOMATIC (publishes after validation).
+val publishToCentralPortal by tasks.registering {
+    group = "publishing"
+    description = "Uploads the deployment bundle to the Sonatype Central Portal."
+    dependsOn(centralPortalBundle)
+    doLast {
+        val user =
+            providers.gradleProperty("mavenCentralUsername").orNull
+                ?: error("mavenCentralUsername is required to publish to the Central Portal.")
+        val password =
+            providers.gradleProperty("mavenCentralPassword").orNull
+                ?: error("mavenCentralPassword is required to publish to the Central Portal.")
+        val publishingType = providers.gradleProperty("centralPublishingType").getOrElse("USER_MANAGED")
+        val token = Base64.getEncoder().encodeToString("$user:$password".toByteArray(Charsets.UTF_8))
+
+        val bundle =
+            centralPortalBundle
+                .get()
+                .archiveFile
+                .get()
+                .asFile
+        require(bundle.exists()) { "Deployment bundle not found: $bundle" }
+
+        // Build the multipart/form-data body by hand (single 'bundle' part).
+        val boundary = "CentralPortalBoundary" + UUID.randomUUID().toString().replace("-", "")
+        val crlf = "\r\n"
+        val preamble =
+            (
+                "--$boundary$crlf" +
+                    "Content-Disposition: form-data; name=\"bundle\"; filename=\"${bundle.name}\"$crlf" +
+                    "Content-Type: application/octet-stream$crlf$crlf"
+            ).toByteArray(Charsets.UTF_8)
+        val epilogue = "$crlf--$boundary--$crlf".toByteArray(Charsets.UTF_8)
+        val body = preamble + bundle.readBytes() + epilogue
+
+        val deploymentName = "$publishProjectName-$version"
+        val uploadUri =
+            URI(
+                "https://central.sonatype.com/api/v1/publisher/upload" +
+                    "?name=$deploymentName&publishingType=$publishingType",
+            )
+        val request =
+            HttpRequest
+                .newBuilder()
+                .uri(uploadUri)
+                .header("Authorization", "Bearer $token")
+                .header("Content-Type", "multipart/form-data; boundary=$boundary")
+                .POST(HttpRequest.BodyPublishers.ofByteArray(body))
+                .build()
+
+        val client = HttpClient.newHttpClient()
+        val response = client.send(request, HttpResponse.BodyHandlers.ofString())
+        if (response.statusCode() !in 200..299) {
+            error("Central Portal upload failed: HTTP ${response.statusCode()} — ${response.body()}")
+        }
+        val deploymentId = response.body().trim()
+        logger.lifecycle(
+            "Central Portal upload accepted (deployment id: $deploymentId). " +
+                "publishingType=$publishingType.",
+        )
+        val automaticPublishing = publishingType.equals("AUTOMATIC", ignoreCase = true)
+        val terminalStates =
+            if (automaticPublishing) {
+                setOf("PUBLISHED")
+            } else {
+                setOf("VALIDATED", "PUBLISHED")
+            }
+        val statusUri = URI("https://central.sonatype.com/api/v1/publisher/status?id=$deploymentId")
+        val statusAttempts =
+            providers.gradleProperty("centralPublishStatusAttempts").map(String::toInt).getOrElse(120)
+        val statusDelayMillis =
+            providers.gradleProperty("centralPublishStatusDelayMillis").map(String::toLong).getOrElse(10_000L)
+        repeat(statusAttempts) { attempt ->
+            val statusRequest =
+                HttpRequest
+                    .newBuilder()
+                    .uri(statusUri)
+                    .header("Authorization", "Bearer $token")
+                    .POST(HttpRequest.BodyPublishers.noBody())
+                    .build()
+            val statusResponse = client.send(statusRequest, HttpResponse.BodyHandlers.ofString())
+            if (statusResponse.statusCode() !in 200..299) {
+                error("Central Portal status check failed: HTTP ${statusResponse.statusCode()} — ${statusResponse.body()}")
+            }
+            val statusBody = JsonSlurper().parseText(statusResponse.body()) as Map<*, *>
+            val deploymentState =
+                statusBody["deploymentState"]?.toString()
+                    ?: error("Central Portal status response did not contain deploymentState: ${statusResponse.body()}")
+            when (deploymentState) {
+                "FAILED" -> error("Central Portal deployment failed: ${statusBody["errors"] ?: statusResponse.body()}")
+                in terminalStates -> {
+                    logger.lifecycle("Central Portal deployment $deploymentId reached $deploymentState.")
+                    return@doLast
+                }
+            }
+            logger.lifecycle(
+                "Central Portal deployment $deploymentId is $deploymentState " +
+                    "(${attempt + 1}/$statusAttempts).",
+            )
+            if (attempt + 1 < statusAttempts) {
+                Thread.sleep(statusDelayMillis)
             }
         }
-        developers {
-            developer {
-                id.set("sydneyrenee")
-                name.set("Sydney Renee")
-                email.set("sydney@solace.ofharmony.ai")
-                url.set("https://github.com/sydneyrenee")
-            }
-        }
-        scm {
-            url.set("https://github.com/KotlinMania/$projectName")
-            connection.set("scm:git:git://github.com/KotlinMania/$projectName.git")
-            developerConnection.set("scm:git:ssh://github.com/KotlinMania/$projectName.git")
-        }
+        error(
+            "Central Portal deployment $deploymentId did not reach " +
+                "${terminalStates.joinToString("/")} after $statusAttempts checks.",
+        )
     }
 }
 
 // ============================================================================
 // Tasks
 // ============================================================================
+
+// Exact test lifecycle task. Without this, ./gradlew test is ambiguous between
+// Android test task names. This runs commonTest through the KMP allTests
+// lifecycle and adds the Android host + Swift Export parity tests.
+tasks.register("test") {
+    group = "verification"
+    description = "Runs the commonTest-backed KMP suite, Android host tests, and Swift Export smoke test."
+    dependsOn("allTests")
+    dependsOn("testAndroidHostTest")
+    dependsOn("swiftExportSmokeTest")
+}
 
 tasks.register("setupAndroidSdk") {
     group = "setup"
@@ -610,6 +1199,12 @@ tasks.register("swiftExportSmokeTest") {
         execOperations
             .exec {
                 workingDir = layout.projectDirectory.dir("swift-test-harness").asFile
+                commandLine("swift", "package", "reset")
+            }.assertNormalExitValue()
+
+        execOperations
+            .exec {
+                workingDir = layout.projectDirectory.dir("swift-test-harness").asFile
                 commandLine("swift", "test")
             }.assertNormalExitValue()
     }
@@ -619,17 +1214,15 @@ tasks.register("swiftExportSmokeTest") {
 // `build` aggregate
 // ----------------------------------------------------------------------------
 // Every configured native target, unconditionally. This is the audit contract —
-// it must mirror the kotlin { } target block exactly. watchosArm32 is the only
-// retired native target (see §5.5.1); everything else MUST build.
+// it must mirror the kotlin { } target block exactly. Retired native targets
+// stay out of both lists; everything configured here MUST build.
 // Do not add a dynamic tasks.matching fallback here: copied templates must make
 // the target surface explicit so missing declarations fail loudly in review.
 // ============================================================================
 val nativeTargetNames =
     listOf(
-        "androidNativeArm32",
         "androidNativeArm64",
         "androidNativeX64",
-        "androidNativeX86",
         "iosArm64",
         "iosSimulatorArm64",
         "iosX64",
