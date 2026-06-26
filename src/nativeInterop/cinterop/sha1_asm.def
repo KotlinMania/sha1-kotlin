@@ -1,0 +1,23 @@
+headers = sha1_asm_wrapper.h
+headerFilter = sha1_asm_wrapper.h
+
+linkerOpts.osx = -lc++
+
+---
+
+#ifndef SHA1_ASM_WRAPPER_H
+#define SHA1_ASM_WRAPPER_H
+
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+void sha1_asm_compress_blocks(uint32_t state[5], const uint8_t *blocks, uint32_t block_count);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif // SHA1_ASM_WRAPPER_H

@@ -16,3 +16,5 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "sha1-kotlin"
+
+includeBuild("../digest-kotlin")
