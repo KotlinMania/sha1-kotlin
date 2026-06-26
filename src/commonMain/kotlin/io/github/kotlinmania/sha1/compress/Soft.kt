@@ -1,9 +1,18 @@
-// port-lint: source src/compress/soft.rs
+// port-lint: source compress/soft.rs
 @file:OptIn(ExperimentalUnsignedTypes::class)
 
-package io.github.kotlinmania.sha1.compress
+package io.github.kotlinmania.sha1.compress.soft
+
+import io.github.kotlinmania.sha1.compress.BLOCK_SIZE
 
 private val K: UIntArray = uintArrayOf(0x5A827999u, 0x6ED9EBA1u, 0x8F1BBCDCu, 0xCA62C1D6u)
+
+/**
+ * Upstream-compatible software compression entry point.
+ */
+internal fun compress(state: UIntArray, blocks: Array<ByteArray>) {
+    compressSoft(state, blocks)
+}
 
 private fun add(a: UIntArray, b: UIntArray): UIntArray =
     uintArrayOf(
@@ -221,10 +230,16 @@ private fun sha1DigestBlockU32(state: UIntArray, block: UIntArray) {
     state[4] = state[4] + e
 }
 
+/**
+ * Core software compression implementation.
+ *
+ * Processes whole 64-byte blocks with the SHA-1 message schedule and state
+ * rounds, writing results back to `state`.
+ */
 internal fun compressSoft(state: UIntArray, blocks: Array<ByteArray>) {
     val blockU32 = UIntArray(BLOCK_SIZE / 4)
-    // since LLVM can't properly use aliasing yet it will make
-    // unnecessary state stores without this copy
+    // Since LLVM does not model aliasing here as expected, this copy avoids
+    // unnecessary state stores.
     val stateCpy = state.copyOf()
     for (block in blocks) {
         var idx = 0

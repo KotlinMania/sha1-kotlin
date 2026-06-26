@@ -12,6 +12,7 @@ import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
 import org.jetbrains.kotlin.gradle.plugin.mpp.apple.XCFramework
 import org.jetbrains.kotlin.gradle.targets.js.nodejs.NodeJsEnvSpec
 import org.jetbrains.kotlin.gradle.targets.js.nodejs.NodeJsRootExtension
+import org.jetbrains.kotlin.gradle.targets.js.testing.KotlinJsTest
 import org.jetbrains.kotlin.gradle.targets.js.yarn.YarnRootEnvSpec
 import org.jetbrains.kotlin.gradle.targets.js.yarn.YarnRootExtension
 import org.jetbrains.kotlin.gradle.targets.wasm.nodejs.WasmNodeJsEnvSpec
@@ -372,6 +373,12 @@ tasks.withType<AbstractTestTask>().configureEach {
         showExceptions = true
         showStackTraces = true
         showStandardStreams = true
+    }
+}
+
+tasks.withType<KotlinJsTest>().configureEach {
+    useMocha {
+        timeout = "20s"
     }
 }
 
