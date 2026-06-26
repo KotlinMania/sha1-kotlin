@@ -1,3 +1,4 @@
+import groovy.json.JsonSlurper
 import org.gradle.api.GradleException
 import org.gradle.api.artifacts.VersionCatalogsExtension
 import org.gradle.api.file.RegularFile
@@ -1044,9 +1045,57 @@ val publishToCentralPortal by tasks.registering {
         if (response.statusCode() !in 200..299) {
             error("Central Portal upload failed: HTTP ${response.statusCode()} — ${response.body()}")
         }
+        val deploymentId = response.body().trim()
         logger.lifecycle(
-            "Central Portal upload accepted (deployment id: ${response.body()}). " +
+            "Central Portal upload accepted (deployment id: $deploymentId). " +
                 "publishingType=$publishingType.",
+        )
+        val automaticPublishing = publishingType.equals("AUTOMATIC", ignoreCase = true)
+        val terminalStates =
+            if (automaticPublishing) {
+                setOf("PUBLISHED")
+            } else {
+                setOf("VALIDATED", "PUBLISHED")
+            }
+        val statusUri = URI("https://central.sonatype.com/api/v1/publisher/status?id=$deploymentId")
+        val statusAttempts =
+            providers.gradleProperty("centralPublishStatusAttempts").map(String::toInt).getOrElse(120)
+        val statusDelayMillis =
+            providers.gradleProperty("centralPublishStatusDelayMillis").map(String::toLong).getOrElse(10_000L)
+        repeat(statusAttempts) { attempt ->
+            val statusRequest =
+                HttpRequest
+                    .newBuilder()
+                    .uri(statusUri)
+                    .header("Authorization", "Bearer $token")
+                    .POST(HttpRequest.BodyPublishers.noBody())
+                    .build()
+            val statusResponse = client.send(statusRequest, HttpResponse.BodyHandlers.ofString())
+            if (statusResponse.statusCode() !in 200..299) {
+                error("Central Portal status check failed: HTTP ${statusResponse.statusCode()} — ${statusResponse.body()}")
+            }
+            val statusBody = JsonSlurper().parseText(statusResponse.body()) as Map<*, *>
+            val deploymentState =
+                statusBody["deploymentState"]?.toString()
+                    ?: error("Central Portal status response did not contain deploymentState: ${statusResponse.body()}")
+            when (deploymentState) {
+                "FAILED" -> error("Central Portal deployment failed: ${statusBody["errors"] ?: statusResponse.body()}")
+                in terminalStates -> {
+                    logger.lifecycle("Central Portal deployment $deploymentId reached $deploymentState.")
+                    return@doLast
+                }
+            }
+            logger.lifecycle(
+                "Central Portal deployment $deploymentId is $deploymentState " +
+                    "(${attempt + 1}/$statusAttempts).",
+            )
+            if (attempt + 1 < statusAttempts) {
+                Thread.sleep(statusDelayMillis)
+            }
+        }
+        error(
+            "Central Portal deployment $deploymentId did not reach " +
+                "${terminalStates.joinToString("/")} after $statusAttempts checks.",
         )
     }
 }
