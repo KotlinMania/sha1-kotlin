@@ -10,7 +10,7 @@ import io.github.kotlinmania.sha1.compress.soft.compressSoft
  * is available and falls back to software when not. This Kotlin port keeps
  * a portable path only, while preserving symbol compatibility.
  */
-private val hasShaExtensions: Boolean = false
+private const val hasShaExtensions: Boolean = false
 
 /**
  * Fallback dispatch hook.

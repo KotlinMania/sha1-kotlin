@@ -61,7 +61,7 @@ _sha1_compress:
 
 	// k for the next five rounds
 	adrp	x1, .K0@PAGE
-	ldr	q4, [x1, #:lo12:.K0@PAGEOFF]
+	ldr	q4, [x1, .K0@PAGEOFF]
 
 	// 0
 	sha1h	s18, s6
@@ -99,7 +99,7 @@ _sha1_compress:
 
 	// k for the next five rounds
 	adrp	x1, .K1@PAGE
-	ldr	q4, [x1, #:lo12:.K1@PAGEOFF]
+	ldr	q4, [x1, .K1@PAGEOFF]
 
 	// 5
 	sha1h	s17, s6
@@ -138,7 +138,7 @@ _sha1_compress:
 
 	// k for the next five rounds
 	adrp	x1, .K2@PAGE
-	ldr	q4, [x1, #:lo12:.K2@PAGEOFF]
+	ldr	q4, [x1, .K2@PAGEOFF]
 
 	// 10
 	sha1h	s18, s6
@@ -177,7 +177,7 @@ _sha1_compress:
 
 	// k for the next five rounds
 	adrp	x1, .K3@PAGE
-	ldr	q4, [x1, #:lo12:.K3@PAGEOFF]
+	ldr	q4, [x1, .K3@PAGEOFF]
 
 	// 15
 	sha1h	s17, s6

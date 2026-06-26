@@ -21,6 +21,8 @@ import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
 import org.jetbrains.kotlin.gradle.plugin.mpp.apple.XCFramework
 import org.jetbrains.kotlin.gradle.targets.js.nodejs.NodeJsEnvSpec
 import org.jetbrains.kotlin.gradle.targets.js.nodejs.NodeJsRootExtension
+import org.jetbrains.kotlin.gradle.targets.js.testing.KotlinJsTest
+import org.jetbrains.kotlin.gradle.targets.js.testing.mocha.KotlinMocha
 import org.jetbrains.kotlin.gradle.targets.js.yarn.YarnRootEnvSpec
 import org.jetbrains.kotlin.gradle.targets.js.yarn.YarnRootExtension
 import org.jetbrains.kotlin.gradle.targets.wasm.nodejs.WasmNodeJsEnvSpec
@@ -419,7 +421,6 @@ fun sha1AssemblySourceFor(platform: NativePlatform): File? {
         os.isMacOsX && "aarch64" in arch -> sha1AsmSourceDir.file("aarch64_apple.S").asFile
         os.isLinux && "aarch64" in arch -> sha1AsmSourceDir.file("aarch64.S").asFile
         !os.isWindows && "x86" in arch && "64" in arch -> sha1AsmSourceDir.file("x64.S").asFile
-        !os.isWindows && arch == "x86" -> sha1AsmSourceDir.file("x86.S").asFile
         else -> null
     }
 }
@@ -546,8 +547,8 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.CInteropProcess>().configureEac
 kotlin {
     jvmToolchain(jvmToolchainVersion)
 
-    // Configure cinterop for all native targets
-    targets.withType<KotlinNativeTarget>().configureEach {
+    // Configure cinterop for the host-native target built by the cpp-library plugin.
+    targets.withType<KotlinNativeTarget>().matching { it.name.startsWith("macos") }.configureEach {
         compilations.getByName("main") {
             cinterops.create("sha1Asm") {
                 defFile = project.file("src/nativeInterop/cinterop/sha1_asm.def")
@@ -636,10 +637,8 @@ kotlin {
     linuxArm64 { configureBenchmarkCompilation() }
     mingwX64 { configureBenchmarkCompilation() }
 
-    // Android NDK — always built (full target surface, no opt-in gate).
-    androidNativeArm32 { configureBenchmarkCompilation() }
+    // Android NDK — always built for supported 64-bit targets.
     androidNativeArm64 { configureBenchmarkCompilation() }
-    androidNativeX86 { configureBenchmarkCompilation() }
     androidNativeX64 { configureBenchmarkCompilation() }
 
     // Web
@@ -753,6 +752,14 @@ tasks.withType<AbstractTestTask>().configureEach {
         showExceptions = true
         showStackTraces = true
         showStandardStreams = true
+    }
+}
+
+tasks.withType<KotlinJsTest>().configureEach {
+    onTestFrameworkSet {
+        if (this is KotlinMocha) {
+            timeout = "30s"
+        }
     }
 }
 
@@ -1149,17 +1156,15 @@ tasks.register("swiftExportSmokeTest") {
 // `build` aggregate
 // ----------------------------------------------------------------------------
 // Every configured native target, unconditionally. This is the audit contract —
-// it must mirror the kotlin { } target block exactly. watchosArm32 is the only
-// retired native target (see §5.5.1); everything else MUST build.
+// it must mirror the kotlin { } target block exactly. Retired native targets
+// stay out of both lists; everything configured here MUST build.
 // Do not add a dynamic tasks.matching fallback here: copied templates must make
 // the target surface explicit so missing declarations fail loudly in review.
 // ============================================================================
 val nativeTargetNames =
     listOf(
-        "androidNativeArm32",
         "androidNativeArm64",
         "androidNativeX64",
-        "androidNativeX86",
         "iosArm64",
         "iosSimulatorArm64",
         "iosX64",

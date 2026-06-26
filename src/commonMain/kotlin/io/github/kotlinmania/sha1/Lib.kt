@@ -3,19 +3,19 @@
 
 package io.github.kotlinmania.sha1
 
-import io.github.kotlinmania.digest.AlgorithmName
 import io.github.kotlinmania.digest.Block
 import io.github.kotlinmania.digest.BlockSizeUser
-import io.github.kotlinmania.digest.BufferKind
-import io.github.kotlinmania.digest.BufferKindUser
 import io.github.kotlinmania.digest.Digest
 import io.github.kotlinmania.digest.DigestFactory
-import io.github.kotlinmania.digest.Eager
 import io.github.kotlinmania.digest.HashMarker
 import io.github.kotlinmania.digest.Output
 import io.github.kotlinmania.digest.OutputSizeUser
 import io.github.kotlinmania.digest.Reset
-import io.github.kotlinmania.digest.UpdateCore
+import io.github.kotlinmania.digest.coreapi.AlgorithmName
+import io.github.kotlinmania.digest.coreapi.BufferKind
+import io.github.kotlinmania.digest.coreapi.BufferKindUser
+import io.github.kotlinmania.digest.coreapi.Eager
+import io.github.kotlinmania.digest.coreapi.UpdateCore
 import io.github.kotlinmania.digest.fmt.Formatter
 import io.github.kotlinmania.sha1.compress.BLOCK_SIZE
 import io.github.kotlinmania.sha1.compress.compress
