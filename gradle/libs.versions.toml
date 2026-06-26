@@ -10,6 +10,7 @@ detekt = "1.23.8"
 ktlint = "14.2.0"
 kotlinxBenchmark = "0.4.17"
 digest-kotlin = "0.1.0"
+km-io = "0.1.5"
 
 [plugins]
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
@@ -29,8 +30,13 @@ kotlinx-datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.
 collections-immutable = { module = "org.jetbrains.kotlinx:kotlinx-collections-immutable", version.ref = "collectionsImmutable" }
 kotlinx-benchmark-runtime = { module = "org.jetbrains.kotlinx:kotlinx-benchmark-runtime", version.ref = "kotlinxBenchmark" }
 digest-kotlin = { module = "io.github.kotlinmania:digest-kotlin", version.ref = "digest-kotlin" }
+km-io = { module = "io.github.kotlinmania:km-io", version.ref = "km-io" }
 
 [bundles]
 sha1-commonMain = [
   "digest-kotlin",
+  "km-io",
+]
+sha1-commonTest = [
+  "km-io",
 ]

@@ -1,7 +1,7 @@
 headers = sha1_asm_wrapper.h
 headerFilter = sha1_asm_wrapper.h
 
-linkerOpts.osx = -lc++
+linkerOpts.osx = -lc++ -Lbuild/lib/main/debug/macos/aarch64 -Lbuild/lib/main/release/macos/aarch64 -lsha1_asm
 
 ---
 

@@ -189,7 +189,10 @@ class Sha1Test {
         }
     }
 
-    private data class FixedResetVector(val input: ByteArray, val output: ByteArray)
+    private data class FixedResetVector(
+        val input: ByteArray,
+        val output: ByteArray,
+    )
 
     private val fixedResetVectors =
         listOf(
