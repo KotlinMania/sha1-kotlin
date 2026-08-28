@@ -5,12 +5,12 @@ Based on AST analysis, here are the concrete next steps.
 ## Summary
 
 - **Files Present:** 6/6 (100.0%)
-- **Function parity:** 23/23 matched (target 38) — 100.0%
-- **Class/type parity:** 2/5 matched (target 2) — 40.0%
-- **Combined symbol parity:** 25/28 matched (target 40) — 89.3%
-- **Average inline-code cosine:** 0.45 (function body across 6 matched files)
+- **Function parity:** 22/23 matched (target 49) — 95.7%
+- **Class/type parity:** 2/5 matched (target 3) — 40.0%
+- **Combined symbol parity:** 24/28 matched (target 52) — 85.7%
+- **Average inline-code cosine:** 0.50 (function body across 6 matched files)
 - **Average documentation cosine:** 0.30 (doc text across 6 matched files)
-- **Cheat-zeroed Files:** 1
+- **Cheat-zeroed Files:** 0
 - **Critical Issues:** 3 files with <0.60 function similarity
 
 ## Priority 1: Fix Incomplete High-Dependency Files
@@ -40,29 +40,32 @@ Every matched file is listed below with function and type symbol parity.
 
 ### 2. lib
 
-- **Target:** `sha1.Lib [ZERO]`
-- **Similarity:** 0.00
+- **Target:** `sha1.Lib`
+- **Similarity:** 0.30
 - **Dependents:** 0
-- **Priority Score:** 31110.0
-- **Functions:** 6/6 matched (target 15)
-- **Missing functions:** _none_
+- **Priority Score:** 41107.0
+- **Functions:** 5/6 matched (target 22)
+- **Missing functions:** `finalize_fixed_core`
 - **Types:** 2/5 matched (target 2)
 - **Missing types:** `BlockSize`, `BufferKind`, `OutputSize`
 
 ### 3. compress.soft
 
-- **Target:** `compress.Soft`
+- **Target:** `soft.Soft [PROVENANCE-FALLBACK]`
 - **Similarity:** 0.65
 - **Dependents:** 0
 - **Priority Score:** 1203.5
-- **Functions:** 12/12 matched (target 18)
+- **Functions:** 12/12 matched (target 22)
 - **Missing functions:** _none_
-- **Types:** 0/0 matched
+- **Types:** 0/0 matched (target 1)
 - **Missing types:** _none_
+- **Provenance warning:** port-lint provenance header matched only after fallback normalization: `tests:src/compress/soft.rs` vs expected `compress/soft.rs`
+- **Proposed provenance header:** `// port-lint: tests compress/soft.rs` (current: `// port-lint: tests src/compress/soft.rs`)
+- **Lint issues:** 1
 
 ### 4. compress.x86
 
-- **Target:** `compress.X86`
+- **Target:** `x86.X86`
 - **Similarity:** 0.54
 - **Dependents:** 0
 - **Priority Score:** 204.6
@@ -73,7 +76,7 @@ Every matched file is listed below with function and type symbol parity.
 
 ### 5. compress.loongarch64_asm
 
-- **Target:** `compress.Loongarch64Asm`
+- **Target:** `loongarch64asm.Loongarch64Asm`
 - **Similarity:** 0.10
 - **Dependents:** 0
 - **Priority Score:** 109.0
@@ -84,7 +87,7 @@ Every matched file is listed below with function and type symbol parity.
 
 ### 6. compress.aarch64
 
-- **Target:** `compress.Aarch64`
+- **Target:** `aarch64.Aarch64`
 - **Similarity:** 0.71
 - **Dependents:** 0
 - **Priority Score:** 102.9
