@@ -7,11 +7,10 @@ import io.github.kotlinmania.sha1.compress.BLOCK_SIZE
 
 private val K: UIntArray = uintArrayOf(0x5A827999u, 0x6ED9EBA1u, 0x8F1BBCDCu, 0xCA62C1D6u)
 
-/**
- * Upstream-compatible software compression entry point.
- */
-internal fun compress(state: UIntArray, blocks: Array<ByteArray>) {
-    compressSoft(state, blocks)
+internal object SoftBackend {
+    fun compress(state: UIntArray, blocks: Array<ByteArray>) {
+        compressSoft(state, blocks)
+    }
 }
 
 private fun add(a: UIntArray, b: UIntArray): UIntArray =
@@ -238,8 +237,6 @@ private fun sha1DigestBlockU32(state: UIntArray, block: UIntArray) {
  */
 internal fun compressSoft(state: UIntArray, blocks: Array<ByteArray>) {
     val blockU32 = UIntArray(BLOCK_SIZE / 4)
-    // Since LLVM does not model aliasing here as expected, this copy avoids
-    // unnecessary state stores.
     val stateCpy = state.copyOf()
     for (block in blocks) {
         var idx = 0

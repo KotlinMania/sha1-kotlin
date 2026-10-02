@@ -49,12 +49,6 @@ plugins {
     alias(libs.plugins.ktlint)
     alias(libs.plugins.kotlinx.benchmark)
     alias(libs.plugins.kotlin.allopen)
-    `cpp-library`
-    // First-party publishing. The convenience publishing plugin rejects
-    // cpp-library's native publication at configuration time. maven-publish
-    // coexists with cpp-library; Central Portal upload is a bespoke task.
-    `maven-publish`
-    signing
 }
 
 group = providers.gradleProperty("project.group").getOrElse("io.github.kotlinmania")
@@ -92,15 +86,6 @@ fun optionalTrimmedProperty(name: String): String? =
 val enabledFeatureNames = csvProperty("project.features")
 val benchmarkEnabled = "benchmark" in enabledFeatureNames
 val benchmarkTargetNames = csvProperty("project.benchmark.targets")
-val commonTestBundleName = optionalTrimmedProperty("project.dependencies.commonTestBundle")
-val commonTestDependencyBundle =
-    commonTestBundleName?.let { bundleName ->
-        extensions
-            .getByType(VersionCatalogsExtension::class.java)
-            .named("libs")
-            .findBundle(bundleName)
-            .orElseThrow { GradleException("Missing libs bundle '$bundleName'") }
-    }
 val commonBenchmarkBundleName = optionalTrimmedProperty("project.dependencies.commonBenchmarkBundle")
 val commonBenchmarkDependencyBundle =
     commonBenchmarkBundleName?.let { bundleName ->
@@ -638,8 +623,10 @@ kotlin {
     linuxArm64 { configureBenchmarkCompilation() }
     mingwX64 { configureBenchmarkCompilation() }
 
-    // Android NDK — always built for supported 64-bit targets.
+    // Android NDK — always built (full target surface, no opt-in gate).
+    androidNativeArm32 { configureBenchmarkCompilation() }
     androidNativeArm64 { configureBenchmarkCompilation() }
+    androidNativeX86 { configureBenchmarkCompilation() }
     androidNativeX64 { configureBenchmarkCompilation() }
 
     // Web
@@ -699,6 +686,38 @@ kotlin {
         commonTest.dependencies {
             implementation(kotlin("test"))
             commonTestDependencyBundle?.let { implementation(it) }
+        }
+        if (benchmarkEnabled) {
+            val commonBenchmark = maybeCreate("commonBenchmark")
+            commonBenchmark.dependencies {
+                implementation(commonBenchmarkDependencyBundle!!)
+            }
+            benchmarkTargetNames.forEach { targetName ->
+                findByName("${targetName}Benchmark")?.dependsOn(commonBenchmark)
+            }
+        }
+    }
+}
+
+allOpen {
+    annotation("org.openjdk.jmh.annotations.State")
+    annotation("kotlinx.benchmark.State")
+}
+
+if (benchmarkEnabled) {
+    benchmark {
+        targets {
+            benchmarkTargetNames.forEach { targetName ->
+                register("${targetName}Benchmark")
+            }
+        }
+        configurations {
+            named("main") {
+                warmups = benchmarkWarmups
+                iterations = benchmarkIterations
+                iterationTime = benchmarkIterationTime
+                iterationTimeUnit = benchmarkIterationTimeUnit
+            }
         }
         if (benchmarkEnabled) {
             val commonBenchmark = maybeCreate("commonBenchmark")
@@ -1110,7 +1129,8 @@ val publishToCentralPortal by tasks.registering {
 tasks.register("test") {
     group = "verification"
     description = "Runs the commonTest-backed KMP suite, Android host tests, and Swift Export smoke test."
-    dependsOn("hostTests")
+    dependsOn("allTests")
+    dependsOn("testAndroidHostTest")
     dependsOn("swiftExportSmokeTest")
 }
 

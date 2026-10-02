@@ -1,5 +1,3 @@
-// port-lint: tests tmp/sha1/tests/mod.rs
-
 package io.github.kotlinmania.sha1
 
 import kotlin.math.min
