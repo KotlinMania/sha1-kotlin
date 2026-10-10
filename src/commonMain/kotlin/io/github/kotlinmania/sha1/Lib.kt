@@ -12,10 +12,14 @@ import io.github.kotlinmania.digest.Output
 import io.github.kotlinmania.digest.OutputSizeUser
 import io.github.kotlinmania.digest.Reset
 import io.github.kotlinmania.digest.coreapi.AlgorithmName
+import io.github.kotlinmania.digest.coreapi.Buffer
 import io.github.kotlinmania.digest.coreapi.BufferKind
 import io.github.kotlinmania.digest.coreapi.BufferKindUser
+import io.github.kotlinmania.digest.coreapi.CoreWrapper
 import io.github.kotlinmania.digest.coreapi.Eager
+import io.github.kotlinmania.digest.coreapi.FixedOutputCore
 import io.github.kotlinmania.digest.coreapi.UpdateCore
+import io.github.kotlinmania.digest.fmt.FmtResult
 import io.github.kotlinmania.digest.fmt.Formatter
 import io.github.kotlinmania.sha1.compress.BLOCK_SIZE
 import io.github.kotlinmania.sha1.compress.compress
@@ -42,7 +46,7 @@ object BlockSize {
 }
 
 object BufferKind {
-    const val EAGER: Boolean = true
+    val EAGER: BufferKind = Eager
 }
 
 object OutputSize {
@@ -50,13 +54,25 @@ object OutputSize {
 }
 
 /**
- * Core SHA-1 state.
+ * Core SHA-1 hasher state.
  *
  * The core owns the five running words and the number of complete blocks that
  * have already been compressed. It only accepts full 64-byte blocks; [Sha1]
  * owns the partial block buffer and final padding.
  */
-class Sha1Core {
+class Sha1Core :
+    HashMarker,
+    BlockSizeUser,
+    BufferKindUser,
+    OutputSizeUser,
+    UpdateCore,
+    FixedOutputCore,
+    Reset,
+    AlgorithmName {
+    companion object {
+        fun default(): Sha1Core = Sha1Core()
+    }
+
     internal val h: UIntArray = SHA1_INITIAL_STATE.copyOf()
     internal var blockLen: ULong = 0u
 
@@ -64,25 +80,44 @@ class Sha1Core {
     override val outputSize: Int = SHA1_OUTPUT_SIZE
     override val bufferKind: BufferKind = Eager
 
-    // Consume whole 64-byte blocks. The caller owns partial-block buffering.
-    fun updateBlocks(blocks: Array<ByteArray>) {
+    override fun updateBlocks(blocks: List<Block<*>>) {
         blockLen += blocks.size.toULong()
         compress(h, blocks.toTypedArray())
     }
 
-    // Apply SHA-style length padding and emit the final 20-byte digest.
-    fun finalizeFixedCore(buffer: ByteArray, bufferPos: Int): ByteArray {
+    fun updateBlocks(blocks: Array<ByteArray>) {
+        updateBlocks(blocks.asList())
+    }
+
+    override fun finalizeFixedCore(buffer: Buffer<*>, out: Output<*>) {
         val bs = blockSize.toULong()
-        val bitLen: ULong = 8u * (pendingLength.toULong() + bs * blockLen)
+        val bitLen: ULong = 8u * (buffer.getPos().toULong() + bs * blockLen)
         val h = this.h.copyOf()
-        len64PaddingBe(pending, pendingLength, bitLen) { block -> compress(h, arrayOf(block)) }
+        buffer.len64PaddingBe(bitLen) { block ->
+            compress(h, arrayOf(block))
+        }
         writeDigestWords(h, out)
     }
 
-    fun reset() {
+    private fun writeDigestWords(words: UIntArray, out: Output<*>) {
+        require(out.size >= SHA1_OUTPUT_SIZE) { "SHA-1 output buffer must be at least 20 bytes" }
+        for ((index, value) in words.withIndex()) {
+            val offset = index * 4
+            out[offset] = (value shr 24).toByte()
+            out[offset + 1] = (value shr 16).toByte()
+            out[offset + 2] = (value shr 8).toByte()
+            out[offset + 3] = value.toByte()
+        }
+    }
+
+    override fun reset() {
         SHA1_INITIAL_STATE.copyInto(h)
         blockLen = 0u
     }
+
+    override fun writeAlgName(formatter: Formatter): FmtResult = formatter.writeString("Sha1")
+
+    fun writeAlgName(): String = "Sha1"
 
     fun copy(): Sha1Core {
         val c = Sha1Core()
@@ -91,19 +126,13 @@ class Sha1Core {
         return c
     }
 
-    fun writeAlgName(): String = "Sha1"
-
     fun fmt(): String = "Sha1Core { ... }"
 
     override fun toString(): String = fmt()
-
-    companion object {
-        fun default(): Sha1Core = Sha1Core()
-    }
 }
 
 /**
- * SHA-1 hasher state.
+ * Public SHA-1 hasher state.
  *
  * SHA-1 is retained for legacy interoperability only. New security-sensitive
  * code should use a stronger hash. Instances support streaming updates,
@@ -122,98 +151,52 @@ class Sha1 private constructor(
     private val core: Sha1Core,
 ) : Digest,
     BlockSizeUser {
-    private val buffer: ByteArray = ByteArray(BLOCK_SIZE)
-    private var bufferPos: Int = 0
+    private var wrapper: CoreWrapper<Sha1Core> = CoreWrapper(core)
 
     constructor() : this(Sha1Core())
 
-    // Update the hash state with the given input bytes.
-    fun update(data: ByteArray) {
-        var offset = 0
-        var remaining = data.size
-        if (bufferPos > 0) {
-            val take = minOf(remaining, BLOCK_SIZE - bufferPos)
-            data.copyInto(buffer, bufferPos, offset, offset + take)
-            bufferPos += take
-            offset += take
-            remaining -= take
-            if (bufferPos == BLOCK_SIZE) {
-                core.updateBlocks(arrayOf(buffer.copyOf()))
-                bufferPos = 0
-            }
-        }
-        if (remaining >= BLOCK_SIZE) {
-            val whole = remaining / BLOCK_SIZE
-            val blocks =
-                Array(whole) { index ->
-                    data.copyOfRange(offset + index * BLOCK_SIZE, offset + (index + 1) * BLOCK_SIZE)
-                }
-            core.updateBlocks(blocks)
-            val consumed = whole * BLOCK_SIZE
-            offset += consumed
-            remaining -= consumed
-        }
-        if (remaining > 0) {
-            data.copyInto(buffer, 0, offset, offset + remaining)
-            bufferPos = remaining
-        }
+    override fun update(data: ByteArray) {
+        wrapper.update(data)
     }
 
-    // Acquire the hash digest.
-    fun finalize(): ByteArray = core.finalizeFixedCore(buffer, bufferPos)
+    override fun finalize(): ByteArray = wrapper.finalizeFixed()
 
-    // Finalize and reset for instance reuse.
-    fun finalizeReset(): ByteArray {
-        val out = core.finalizeFixedCore(buffer, bufferPos)
-        core.reset()
-        buffer.fill(0)
-        bufferPos = 0
-        return out
+    override fun finalizeReset(): ByteArray = wrapper.finalizeFixedReset()
+
+    override fun finalizeInto(out: Output<*>) {
+        wrapper.finalizeInto(out)
     }
 
-    fun reset() {
-        core.reset()
-        buffer.fill(0)
-        bufferPos = 0
+    override fun finalizeIntoReset(out: Output<*>) {
+        wrapper.finalizeIntoReset(out)
+    }
+
+    override fun reset() {
+        wrapper.reset()
     }
 
     override val blockSize: Int get() = BLOCK_SIZE
     override val outputSize: Int get() = SHA1_OUTPUT_SIZE
 
     companion object {
+        init {
+            Digest.register(
+                Sha1::class,
+                object : DigestFactory<Sha1> {
+                    override fun new(): Sha1 = Sha1()
+
+                    override val outputSize: Int = SHA1_OUTPUT_SIZE
+                    override val blockSize: Int = BLOCK_SIZE
+                },
+            )
+        }
+
         fun new(): Sha1 = Sha1()
 
-        // One-shot convenience: hash data in one call and return the digest.
         fun digest(data: ByteArray): ByteArray {
             val h = Sha1()
             h.update(data)
             return h.finalize()
         }
-    }
-}
-
-// Apply Merkle-Damgård length padding in big-endian form and emit one or two
-// completed 64-byte blocks through the supplied compressor.
-private inline fun len64PaddingBe(
-    buffer: ByteArray,
-    bufferPos: Int,
-    bitLen: ULong,
-    compressor: (ByteArray) -> Unit,
-) {
-    val block = ByteArray(BLOCK_SIZE)
-    buffer.copyInto(block, 0, 0, bufferPos)
-    block[bufferPos] = 0x80.toByte()
-    if (bufferPos < BLOCK_SIZE - 8) {
-        for (i in 0 until 8) {
-            block[BLOCK_SIZE - 1 - i] = ((bitLen shr (i * 8)) and 0xFFu).toByte()
-        }
-        compressor(block)
-    } else {
-        compressor(block)
-        val tail = ByteArray(BLOCK_SIZE)
-        for (i in 0 until 8) {
-            tail[BLOCK_SIZE - 1 - i] = ((bitLen shr (i * 8)) and 0xFFu).toByte()
-        }
-        compressor(tail)
     }
 }

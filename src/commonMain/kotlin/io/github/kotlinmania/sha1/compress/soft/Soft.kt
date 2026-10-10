@@ -13,6 +13,13 @@ internal object SoftBackend {
     }
 }
 
+/**
+ * Upstream-compatible software compression entry point.
+ */
+internal fun compress(state: UIntArray, blocks: Array<ByteArray>) {
+    compressSoft(state, blocks)
+}
+
 private fun add(a: UIntArray, b: UIntArray): UIntArray =
     uintArrayOf(
         a[0] + b[0],

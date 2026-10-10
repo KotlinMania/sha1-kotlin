@@ -1,5 +1,6 @@
 import groovy.json.JsonSlurper
 import org.gradle.api.GradleException
+import org.gradle.api.artifacts.ExternalModuleDependencyBundle
 import org.gradle.api.artifacts.VersionCatalogsExtension
 import org.gradle.api.file.RegularFile
 import org.gradle.api.provider.Provider
@@ -49,13 +50,16 @@ plugins {
     alias(libs.plugins.ktlint)
     alias(libs.plugins.kotlinx.benchmark)
     alias(libs.plugins.kotlin.allopen)
+    `cpp-library`
+    `maven-publish`
+    signing
 }
 
 group = providers.gradleProperty("project.group").getOrElse("io.github.kotlinmania")
 version = providers.gradleProperty("project.version").getOrElse("0.1.0-SNAPSHOT")
 val frameworkName = providers.gradleProperty("project.frameworkName").getOrElse("Unnamed")
 val projectNamespace = providers.gradleProperty("project.namespace").getOrElse("io.github.kotlinmania")
-val kotlinVersion = providers.gradleProperty("versions.kotlin").getOrElse("2.4.0")
+val kotlinVersion = providers.gradleProperty("versions.kotlin").getOrElse("2.4.20")
 val isCodeqlBuild = providers.gradleProperty("kotlinmania.codeql").map(String::toBoolean).getOrElse(false)
 val commonMainBundleName = providers.gradleProperty("project.dependencies.commonMainBundle").get()
 val commonMainDependencyBundle =
@@ -98,6 +102,15 @@ val commonBenchmarkDependencyBundle =
 if (benchmarkEnabled && commonBenchmarkDependencyBundle == null) {
     throw GradleException("Feature 'benchmark' requires project.dependencies.commonBenchmarkBundle")
 }
+val commonTestBundleName = optionalTrimmedProperty("project.dependencies.commonTestBundle")
+val commonTestDependencyBundle: Provider<ExternalModuleDependencyBundle>? =
+    commonTestBundleName?.let { bundleName ->
+        extensions
+            .getByType(VersionCatalogsExtension::class.java)
+            .named("libs")
+            .findBundle(bundleName)
+            .orElseThrow { GradleException("Missing libs bundle '$bundleName'") }
+    }
 val benchmarkWarmups = providers.gradleProperty("project.benchmark.warmups").map { it.toInt() }.getOrElse(3)
 val benchmarkIterations = providers.gradleProperty("project.benchmark.iterations").map { it.toInt() }.getOrElse(5)
 val benchmarkIterationTime = providers.gradleProperty("project.benchmark.iterationTime").map { it.toLong() }.getOrElse(1L)
@@ -623,10 +636,8 @@ kotlin {
     linuxArm64 { configureBenchmarkCompilation() }
     mingwX64 { configureBenchmarkCompilation() }
 
-    // Android NDK — always built (full target surface, no opt-in gate).
-    androidNativeArm32 { configureBenchmarkCompilation() }
+    // Android NDK — always built for supported 64-bit targets.
     androidNativeArm64 { configureBenchmarkCompilation() }
-    androidNativeX86 { configureBenchmarkCompilation() }
     androidNativeX64 { configureBenchmarkCompilation() }
 
     // Web
@@ -686,38 +697,6 @@ kotlin {
         commonTest.dependencies {
             implementation(kotlin("test"))
             commonTestDependencyBundle?.let { implementation(it) }
-        }
-        if (benchmarkEnabled) {
-            val commonBenchmark = maybeCreate("commonBenchmark")
-            commonBenchmark.dependencies {
-                implementation(commonBenchmarkDependencyBundle!!)
-            }
-            benchmarkTargetNames.forEach { targetName ->
-                findByName("${targetName}Benchmark")?.dependsOn(commonBenchmark)
-            }
-        }
-    }
-}
-
-allOpen {
-    annotation("org.openjdk.jmh.annotations.State")
-    annotation("kotlinx.benchmark.State")
-}
-
-if (benchmarkEnabled) {
-    benchmark {
-        targets {
-            benchmarkTargetNames.forEach { targetName ->
-                register("${targetName}Benchmark")
-            }
-        }
-        configurations {
-            named("main") {
-                warmups = benchmarkWarmups
-                iterations = benchmarkIterations
-                iterationTime = benchmarkIterationTime
-                iterationTimeUnit = benchmarkIterationTimeUnit
-            }
         }
         if (benchmarkEnabled) {
             val commonBenchmark = maybeCreate("commonBenchmark")
@@ -1129,8 +1108,7 @@ val publishToCentralPortal by tasks.registering {
 tasks.register("test") {
     group = "verification"
     description = "Runs the commonTest-backed KMP suite, Android host tests, and Swift Export smoke test."
-    dependsOn("allTests")
-    dependsOn("testAndroidHostTest")
+    dependsOn("hostTests")
     dependsOn("swiftExportSmokeTest")
 }
 
@@ -1197,7 +1175,7 @@ tasks.register("swiftExportSmokeTest") {
                         "CONFIGURATION" to "Debug",
                         "ARCHS" to "arm64",
                         "FRAMEWORKS_FOLDER_PATH" to "Frameworks",
-                        "MACOSX_DEPLOYMENT_TARGET" to "14.0",
+                        "MACOSX_DEPLOYMENT_TARGET" to "15.0",
                         "DEPLOYMENT_TARGET_SETTING_NAME" to "MACOSX_DEPLOYMENT_TARGET",
                     ),
                 )
@@ -1209,15 +1187,25 @@ tasks.register("swiftExportSmokeTest") {
                 .get()
                 .asFile
         if (generatedPackageSwift.exists()) {
-            val text = generatedPackageSwift.readText()
-            if (!text.contains("platforms:")) {
-                generatedPackageSwift.writeText(
+            var text = generatedPackageSwift.readText()
+            text = text.replace("// swift-tools-version: 5.9", "// swift-tools-version: 6.0")
+            if (text.contains("platforms:")) {
+                text = text.replace(Regex("""platforms:\s*\[\s*\.macOS\(\.v\d+\)\s*\]"""), "platforms: [.macOS(.v15)]")
+            } else {
+                text =
                     text.replaceFirst(
-                        Regex("(name:\\s*\"[^\"]*\",)"),
-                        "\$1\n    platforms: [.macOS(.v14)],",
-                    ),
-                )
+                        Regex("""(let package = Package\s*\(\s*name:\s*"[^"]*",|Package\(\s*name:\s*"[^"]*",)"""),
+                        "$1\n    platforms: [.macOS(.v15)],",
+                    )
             }
+            if (!text.contains("swiftLanguageModes:")) {
+                text =
+                    text.replaceFirst(
+                        Regex("""(\n\)\s*$)"""),
+                        ",\n    swiftLanguageModes: [.v5]$1",
+                    )
+            }
+            generatedPackageSwift.writeText(text)
         }
 
         execOperations
