@@ -1,3 +1,4 @@
+// port-lint: tests compress/soft.rs
 @file:OptIn(ExperimentalUnsignedTypes::class)
 
 package io.github.kotlinmania.sha1.compress

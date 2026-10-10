@@ -5,10 +5,10 @@ Based on AST analysis, here are the concrete next steps.
 ## Summary
 
 - **Files Present:** 6/6 (100.0%)
-- **Function parity:** 22/23 matched (target 49) — 95.7%
-- **Class/type parity:** 2/5 matched (target 3) — 40.0%
-- **Combined symbol parity:** 24/28 matched (target 52) — 85.7%
-- **Average inline-code cosine:** 0.50 (function body across 6 matched files)
+- **Function parity:** 23/23 matched (target 48) — 100.0%
+- **Class/type parity:** 5/5 matched (target 7) — 100.0%
+- **Combined symbol parity:** 28/28 matched (target 55) — 100.0%
+- **Average inline-code cosine:** 0.52 (function body across 6 matched files)
 - **Average documentation cosine:** 0.30 (doc text across 6 matched files)
 - **Cheat-zeroed Files:** 0
 - **Critical Issues:** 3 files with <0.60 function similarity
@@ -38,30 +38,27 @@ Every matched file is listed below with function and type symbol parity.
 - **Types:** 0/0 matched
 - **Missing types:** _none_
 
-### 2. lib
+### 2. compress.soft
 
-- **Target:** `sha1.Lib`
-- **Similarity:** 0.30
-- **Dependents:** 0
-- **Priority Score:** 41107.0
-- **Functions:** 5/6 matched (target 22)
-- **Missing functions:** `finalize_fixed_core`
-- **Types:** 2/5 matched (target 2)
-- **Missing types:** `BlockSize`, `BufferKind`, `OutputSize`
-
-### 3. compress.soft
-
-- **Target:** `soft.Soft [PROVENANCE-FALLBACK]`
+- **Target:** `soft.Soft`
 - **Similarity:** 0.65
 - **Dependents:** 0
 - **Priority Score:** 1203.5
-- **Functions:** 12/12 matched (target 22)
+- **Functions:** 12/12 matched (target 23)
 - **Missing functions:** _none_
-- **Types:** 0/0 matched (target 1)
+- **Types:** 0/0 matched (target 2)
 - **Missing types:** _none_
-- **Provenance warning:** port-lint provenance header matched only after fallback normalization: `tests:src/compress/soft.rs` vs expected `compress/soft.rs`
-- **Proposed provenance header:** `// port-lint: tests compress/soft.rs` (current: `// port-lint: tests src/compress/soft.rs`)
-- **Lint issues:** 1
+
+### 3. lib
+
+- **Target:** `sha1.Lib`
+- **Similarity:** 0.42
+- **Dependents:** 0
+- **Priority Score:** 1105.8
+- **Functions:** 6/6 matched (target 20)
+- **Missing functions:** _none_
+- **Types:** 5/5 matched
+- **Missing types:** _none_
 
 ### 4. compress.x86
 
