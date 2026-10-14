@@ -3,6 +3,7 @@
 
 package io.github.kotlinmania.sha1.compress
 
+import io.github.kotlinmania.sha1.compress.soft.compressSoft
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.convert
@@ -29,6 +30,7 @@ class Sha1AsmNativeTest {
 
     private fun nativeCompress(initial: UIntArray, blocks: Array<ByteArray>): UIntArray {
         val state = initial.copyOf()
+        if (blocks.isEmpty()) return state
         val blockBytes = UByteArray(blocks.size * BLOCK_SIZE)
         for ((blockIndex, block) in blocks.withIndex()) {
             require(block.size == BLOCK_SIZE) { "SHA-1 compression blocks must be exactly 64 bytes" }
@@ -86,15 +88,27 @@ class Sha1AsmNativeTest {
 
     @Test
     fun multipleBlocksAreCompressedInOrder() {
-        val state =
-            nativeCompress(
-                initialState(),
-                arrayOf(padSingleBlock(byteArrayOf(0x61, 0x62, 0x63)), ByteArray(BLOCK_SIZE)),
-            )
+        val blocks = arrayOf(padSingleBlock(byteArrayOf(0x61, 0x62, 0x63)), ByteArray(BLOCK_SIZE))
+        val state = nativeCompress(initialState(), blocks)
 
         assertContentEquals(
             uintArrayOf(0xE138DC24u, 0x275DCCF0u, 0x40E8DFF7u, 0x0E2E258Eu, 0xAA13BE7Du),
             state,
         )
+
+        val dispatchedState = initialState()
+        compress(dispatchedState, blocks)
+        assertContentEquals(state, dispatchedState)
+
+        val softState = initialState()
+        compressSoft(softState, blocks)
+        assertContentEquals(state, softState)
+    }
+
+    @Test
+    fun emptyBlocksLeaveStateUnchanged() {
+        val state = initialState()
+        compress(state, emptyArray())
+        assertContentEquals(initialState(), state)
     }
 }

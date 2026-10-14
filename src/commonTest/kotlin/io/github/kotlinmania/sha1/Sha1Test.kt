@@ -1,7 +1,11 @@
 // port-lint: tests tests/mod.rs
+@file:OptIn(ExperimentalUnsignedTypes::class)
+
 package io.github.kotlinmania.sha1
 
-import kotlin.math.min
+import io.github.kotlinmania.digest.Digest
+import io.github.kotlinmania.digest.dev.feedRand16mib
+import io.github.kotlinmania.digest.dev.fixedResetTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -29,6 +33,14 @@ class Sha1Test {
     fun abcMatchesKnownDigest() {
         val out = Sha1.digest("abc".encodeToByteArray())
         assertContentEquals(hex("a9993e364706816aba3e25717850c26c9cd0d89d"), out)
+    }
+
+    @Test
+    fun helloWorldMatchesDocTestDigest() {
+        val hasher = Sha1.new()
+        hasher.update("hello world".encodeToByteArray())
+        val result = hasher.finalize()
+        assertContentEquals(hex("2aae6c35c94fcfb415dbe95f408b9ce91ee846ed"), result)
     }
 
     @Test
@@ -90,15 +102,57 @@ class Sha1Test {
     }
 
     @Test
-    fun algorithmNameIsSha1() {
+    fun hasherCopyPreservesPartialBufferAndCoreState() {
+        val original = Sha1.newWithPrefix("The quick brown fox ".encodeToByteArray())
+        val cloned = original.copy()
+        original.update("jumps over the lazy dog".encodeToByteArray())
+        cloned.update("jumps over the lazy cog".encodeToByteArray())
+        assertContentEquals(
+            hex("2fd4e1c67a2d28fced849ee1bb76e7391b93eb12"),
+            original.finalize(),
+        )
+        assertContentEquals(
+            hex("de9f2c7fd25e1b3afad3e85a0bd17d9b100db4b3"),
+            cloned.finalize(),
+        )
+    }
+
+    @Test
+    fun algorithmNameAndOidAndFormatMatchUpstream() {
         assertEquals("Sha1", Sha1Core().writeAlgName())
+        assertEquals("1.3.14.3.2.26", Sha1Core.OID)
+        assertEquals("1.3.14.3.2.26", Sha1.OID)
+        assertEquals("Sha1Core { ... }", Sha1Core().toString())
+        assertEquals("Sha1 { .. }", Sha1().toString())
+    }
+
+    @Test
+    fun digestFactoryRegistrationWorks() {
+        val out = Digest.digest(Sha1::class, "abc".encodeToByteArray())
+        assertContentEquals(hex("a9993e364706816aba3e25717850c26c9cd0d89d"), out)
+        assertEquals(20, Digest.outputSize(Sha1::class))
+        assertEquals(64, Digest.blockSize(Sha1::class))
+    }
+
+    @Test
+    fun topLevelCompressReExportMatchesBackend() {
+        val state = uintArrayOf(0x67452301u, 0xEFCDAB89u, 0x98BADCFEu, 0x10325476u, 0xC3D2E1F0u)
+        val block = ByteArray(64)
+        block[0] = 0x80.toByte()
+        compress(state, arrayOf(block))
+        assertContentEquals(
+            uintArrayOf(0xDA39A3EEu, 0x5E6B4B0Du, 0x3255BFEFu, 0x95601890u, 0xAFD80709u),
+            state,
+        )
     }
 
     @Test
     fun sha1Rand() {
+        val h = Sha1.new()
+        feedRand16mib(h)
         assertContentEquals(
             hex("7e565a25a8b123e9881addbcedcd927b23377a78"),
-            random16MiBDigest(),
+            h.finalize(),
         )
     }
 
@@ -106,85 +160,9 @@ class Sha1Test {
     fun sha1Main() {
         for ((index, vector) in fixedResetVectors.withIndex()) {
             assertNull(
-                fixedResetTest(vector.input, vector.output),
+                fixedResetTest(vector.input, vector.output, ::Sha1, Sha1::copy),
                 "failed upstream test vector $index in sha1Main",
             )
-        }
-    }
-
-    private fun fixedResetTest(input: ByteArray, expected: ByteArray): String? {
-        val h = Sha1()
-        h.update(input)
-        if (!h.finalize().contentEquals(expected)) {
-            return "whole message"
-        }
-
-        val hWithReset = Sha1()
-        hWithReset.update(input)
-        if (!hWithReset.finalizeReset().contentEquals(expected)) {
-            return "whole message after reset"
-        }
-
-        for (chunkSize in 1 until min(17, input.size)) {
-            val streamingHasher = Sha1()
-            val streamingHasherWithReset = Sha1()
-            var start = 0
-            while (start < input.size) {
-                val end = min(start + chunkSize, input.size)
-                val chunk = input.copyOfRange(start, end)
-                streamingHasher.update(chunk)
-                streamingHasherWithReset.update(chunk)
-                start = end
-            }
-            if (!streamingHasher.finalize().contentEquals(expected)) {
-                return "message in chunks"
-            }
-            if (!streamingHasherWithReset.finalizeReset().contentEquals(expected)) {
-                return "message in chunks after reset"
-            }
-        }
-
-        return null
-    }
-
-    private fun random16MiBDigest(): ByteArray {
-        val hasher = Sha1()
-        val buf = ByteArray(1024)
-        val rng = XorShiftRng()
-        val rounds = 16 * (1 shl 20) / buf.size
-        repeat(rounds) {
-            rng.fill(buf)
-            hasher.update(buf)
-            hasher.update(byteArrayOf(42))
-        }
-        return hasher.finalize()
-    }
-
-    private class XorShiftRng {
-        private var x = 0x07873B4Au
-        private var y = 0xFAAB8FFEu
-        private var z = 0x1745980Fu
-        private var w = 0xB0ADB4F3u
-
-        fun fill(buf: ByteArray) {
-            var i = 0
-            while (i < buf.size) {
-                val value = nextUInt()
-                buf[i] = value.toByte()
-                buf[i + 1] = (value shr 8).toByte()
-                buf[i + 2] = (value shr 16).toByte()
-                buf[i + 3] = (value shr 24).toByte()
-                i += 4
-            }
-        }
-
-        private fun nextUInt(): UInt {
-            val t = x xor (x shl 11)
-            x = y
-            y = z
-            z = w
-            w = w xor (w shr 19) xor (t xor (t shr 8))
-            return w
         }
     }
 

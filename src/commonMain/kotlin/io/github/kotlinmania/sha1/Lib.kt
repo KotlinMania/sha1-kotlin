@@ -22,7 +22,7 @@ import io.github.kotlinmania.digest.coreapi.UpdateCore
 import io.github.kotlinmania.digest.fmt.FmtResult
 import io.github.kotlinmania.digest.fmt.Formatter
 import io.github.kotlinmania.sha1.compress.BLOCK_SIZE
-import io.github.kotlinmania.sha1.compress.compress
+import io.github.kotlinmania.sha1.compress.platformCompress
 
 // Pure Kotlin implementation of the SHA-1 cryptographic hash algorithm.
 // SHA-1 is cryptographically broken and unsuitable for security-sensitive
@@ -70,6 +70,8 @@ class Sha1Core :
     Reset,
     AlgorithmName {
     companion object {
+        const val OID: String = "1.3.14.3.2.26"
+
         fun default(): Sha1Core = Sha1Core()
     }
 
@@ -132,6 +134,13 @@ class Sha1Core :
 }
 
 /**
+ * SHA-1 compression function.
+ */
+fun compress(state: UIntArray, blocks: Array<ByteArray>) {
+    platformCompress(state, blocks)
+}
+
+/**
  * Public SHA-1 hasher state.
  *
  * SHA-1 is retained for legacy interoperability only. New security-sensitive
@@ -148,10 +157,10 @@ class Sha1Core :
  * ```
  */
 class Sha1 private constructor(
-    private val core: Sha1Core,
+    core: Sha1Core,
 ) : Digest,
     BlockSizeUser {
-    private var wrapper: CoreWrapper<Sha1Core> = CoreWrapper(core)
+    private val wrapper: CoreWrapper<Sha1Core> = CoreWrapper(core)
 
     constructor() : this(Sha1Core())
 
@@ -175,10 +184,24 @@ class Sha1 private constructor(
         wrapper.reset()
     }
 
+    fun copy(): Sha1 {
+        val (innerCore, buffer) = wrapper.decompose()
+        val copy = Sha1(innerCore.copy())
+        val remaining = buffer.remainingBytes()
+        if (remaining.isNotEmpty()) {
+            copy.update(remaining)
+        }
+        return copy
+    }
+
     override val blockSize: Int get() = BLOCK_SIZE
     override val outputSize: Int get() = SHA1_OUTPUT_SIZE
 
+    override fun toString(): String = wrapper.toString()
+
     companion object {
+        const val OID: String = Sha1Core.OID
+
         init {
             Digest.register(
                 Sha1::class,
@@ -192,6 +215,12 @@ class Sha1 private constructor(
         }
 
         fun new(): Sha1 = Sha1()
+
+        fun newWithPrefix(data: ByteArray): Sha1 {
+            val h = Sha1()
+            h.update(data)
+            return h
+        }
 
         fun digest(data: ByteArray): ByteArray {
             val h = Sha1()
