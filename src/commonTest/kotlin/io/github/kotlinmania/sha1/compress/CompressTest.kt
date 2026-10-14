@@ -3,7 +3,9 @@
 
 package io.github.kotlinmania.sha1.compress
 
+import io.github.kotlinmania.sha1.compress.soft.compressSoft
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 
 class CompressTest {
@@ -42,5 +44,39 @@ class CompressTest {
         assertEquals(0xBA3E2571u, state[2])
         assertEquals(0x7850C26Cu, state[3])
         assertEquals(0x9CD0D89Du, state[4])
+    }
+
+    @Test
+    fun zeroBlockMatchesUpstreamBenchVector() {
+        val state = UIntArray(5)
+        compress(state, arrayOf(ByteArray(BLOCK_SIZE)))
+        assertContentEquals(
+            uintArrayOf(0x9E1547EDu, 0x57EC91C2u, 0x30FA8BC8u, 0xC7785A54u, 0xA7EFA5E3u),
+            state,
+        )
+
+        val softState = UIntArray(5)
+        compressSoft(softState, arrayOf(ByteArray(BLOCK_SIZE)))
+        assertContentEquals(state, softState)
+    }
+
+    @Test
+    fun multipleBlocksAndEmptyBlocksMatchSoftBackend() {
+        val blocks = arrayOf(padSingleBlock(byteArrayOf(0x61, 0x62, 0x63)), ByteArray(BLOCK_SIZE))
+        val state = initialState()
+        compress(state, blocks)
+
+        val softState = initialState()
+        compressSoft(softState, blocks)
+
+        assertContentEquals(
+            uintArrayOf(0xE138DC24u, 0x275DCCF0u, 0x40E8DFF7u, 0x0E2E258Eu, 0xAA13BE7Du),
+            state,
+        )
+        assertContentEquals(softState, state)
+
+        val unchanged = initialState()
+        compress(unchanged, emptyArray())
+        assertContentEquals(initialState(), unchanged)
     }
 }

@@ -1,24 +1,24 @@
 #include "sha1_asm_wrapper.h"
 
 #if defined(SHA1_KOTLIN_HAS_UPSTREAM_ASM)
-extern "C" void sha1_compress(uint32_t state[5], const uint8_t block[64]);
+extern void sha1_compress(uint32_t state[5], const uint8_t block[64]);
 #else
 static uint32_t sha1_rotl(uint32_t value, uint32_t bits) {
-    return (value << bits) | (value >> (32 - bits));
+    return (value << bits) | (value >> (32U - bits));
 }
 
-extern "C" void sha1_compress(uint32_t state[5], const uint8_t block[64]) {
+void sha1_compress(uint32_t state[5], const uint8_t block[64]) {
     uint32_t w[80];
     for (uint32_t i = 0; i < 16; ++i) {
-        const uint32_t offset = i * 4;
+        const uint32_t offset = i * 4U;
         w[i] =
-            (static_cast<uint32_t>(block[offset]) << 24) |
-            (static_cast<uint32_t>(block[offset + 1]) << 16) |
-            (static_cast<uint32_t>(block[offset + 2]) << 8) |
-            static_cast<uint32_t>(block[offset + 3]);
+            ((uint32_t)block[offset] << 24) |
+            ((uint32_t)block[offset + 1] << 16) |
+            ((uint32_t)block[offset + 2] << 8) |
+            (uint32_t)block[offset + 3];
     }
     for (uint32_t i = 16; i < 80; ++i) {
-        w[i] = sha1_rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+        w[i] = sha1_rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1U);
     }
 
     uint32_t a = state[0];
@@ -43,10 +43,10 @@ extern "C" void sha1_compress(uint32_t state[5], const uint8_t block[64]) {
             f = b ^ c ^ d;
             k = 0xCA62C1D6U;
         }
-        const uint32_t temp = sha1_rotl(a, 5) + f + e + k + w[i];
+        const uint32_t temp = sha1_rotl(a, 5U) + f + e + k + w[i];
         e = d;
         d = c;
-        c = sha1_rotl(b, 30);
+        c = sha1_rotl(b, 30U);
         b = a;
         a = temp;
     }
@@ -59,12 +59,12 @@ extern "C" void sha1_compress(uint32_t state[5], const uint8_t block[64]) {
 }
 #endif
 
-extern "C" void sha1_asm_compress_blocks(
+void sha1_asm_compress_blocks(
     uint32_t state[5],
     const uint8_t *blocks,
     uint32_t block_count
 ) {
     for (uint32_t i = 0; i < block_count; ++i) {
-        sha1_compress(state, blocks + static_cast<uint64_t>(i) * 64U);
+        sha1_compress(state, blocks + (uint64_t)i * 64U);
     }
 }

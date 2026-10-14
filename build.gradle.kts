@@ -2,19 +2,12 @@ import groovy.json.JsonSlurper
 import org.gradle.api.GradleException
 import org.gradle.api.artifacts.ExternalModuleDependencyBundle
 import org.gradle.api.artifacts.VersionCatalogsExtension
-import org.gradle.api.file.RegularFile
-import org.gradle.api.provider.Provider
 import org.gradle.api.publish.maven.MavenPublication
 import org.gradle.api.publish.maven.tasks.PublishToMavenRepository
-import org.gradle.api.tasks.Exec
 import org.gradle.api.tasks.testing.AbstractTestTask
 import org.gradle.api.tasks.testing.logging.TestExceptionFormat
 import org.gradle.api.tasks.testing.logging.TestLogEvent
 import org.gradle.kotlin.dsl.support.serviceOf
-import org.gradle.language.cpp.tasks.CppCompile
-import org.gradle.nativeplatform.Linkage
-import org.gradle.nativeplatform.platform.NativePlatform
-import org.gradle.nativeplatform.tasks.CreateStaticLibrary
 import org.gradle.plugins.signing.Sign
 import org.gradle.process.ExecOperations
 import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
@@ -50,7 +43,6 @@ plugins {
     alias(libs.plugins.ktlint)
     alias(libs.plugins.kotlinx.benchmark)
     alias(libs.plugins.kotlin.allopen)
-    `cpp-library`
     `maven-publish`
     signing
 }
@@ -373,188 +365,8 @@ val jvmToolchainVersion = providers.gradleProperty("jvm.toolchain").getOrElse("2
 //   contract that forces every current KotlinMania target to compile.
 // ============================================================================
 
-// ============================================================================
-// SHA-1 Assembly Wrapper Compilation for Native Interop
-// ----------------------------------------------------------------------------
-// Gradle's cpp-library plugin compiles the sha1_asm wrapper as a static library,
-// which cinterop then bundles into the produced klib. Source lives in
-// src/nativeInterop/cinterop (not the plugin default src/main/cpp), so the
-// source/header dirs are set explicitly. STATIC linkage gives cinterop a
-// libsha1_asm.a to bundle (no runtime .dylib dependency).
-// ============================================================================
-library {
-    baseName.set("sha1_asm")
-
-    // Source files
-    source.from(file("src/nativeInterop/cinterop/sha1_asm_wrapper.cpp"))
-
-    // Private headers
-    privateHeaders.from(file("src/nativeInterop/cinterop"))
-
-    // Static linkage so cinterop can bundle the archive directly.
-    linkage.set(listOf(Linkage.STATIC))
-
-    // Declare every host-native machine our CI runners cover. Gradle's
-    // cpp-library plugin CANNOT cross-compile — it only builds the variant
-    // matching the build host and creates no tasks for the others. So the
-    // macOS runner builds macОS, the Linux runner builds Linux, the Windows
-    // runner builds Windows; each is a host-native compile, never a cross.
-    // (Ref: Gradle cpp_library_plugin docs — cross-compilation unsupported.)
-    targetMachines.set(
-        listOf(
-            machines.macOS.architecture("aarch64"),
-            machines.macOS.x86_64,
-            machines.linux.x86_64,
-            machines.linux.architecture("aarch64"),
-            machines.windows.x86_64,
-        ),
-    )
-}
-
-val sha1AsmSourceDir = layout.projectDirectory.dir("src/nativeInterop/cinterop/asm")
-
-fun sha1AssemblySourceFor(platform: NativePlatform): File? {
-    val arch = platform.architecture.name.lowercase()
-    val os = platform.operatingSystem
-    return when {
-        os.isMacOsX && "aarch64" in arch -> sha1AsmSourceDir.file("aarch64_apple.S").asFile
-        os.isLinux && "aarch64" in arch -> sha1AsmSourceDir.file("aarch64.S").asFile
-        !os.isWindows && "x86" in arch && "64" in arch -> sha1AsmSourceDir.file("x64.S").asFile
-        else -> null
-    }
-}
-
-data class Sha1AsmVariant(
-    val staticLibraryTaskName: String,
-    val compileTaskName: String,
-    val sourcePath: String,
-    val compiler: String,
-    val compilerArgs: List<String>,
-)
-
-val sha1AsmVariants =
-    listOf(
-        Sha1AsmVariant(
-            staticLibraryTaskName = "createDebugMacosAarch64",
-            compileTaskName = "compileDebugMacosAarch64Sha1Asm",
-            sourcePath = "src/nativeInterop/cinterop/asm/aarch64_apple.S",
-            compiler = "clang",
-            compilerArgs = listOf("-c", "-x", "assembler-with-cpp", "-fPIC", "-arch", "arm64", "-march=armv8-a+crypto"),
-        ),
-        Sha1AsmVariant(
-            staticLibraryTaskName = "createReleaseMacosAarch64",
-            compileTaskName = "compileReleaseMacosAarch64Sha1Asm",
-            sourcePath = "src/nativeInterop/cinterop/asm/aarch64_apple.S",
-            compiler = "clang",
-            compilerArgs = listOf("-c", "-x", "assembler-with-cpp", "-fPIC", "-arch", "arm64", "-march=armv8-a+crypto"),
-        ),
-        Sha1AsmVariant(
-            staticLibraryTaskName = "createDebugMacosX86-64",
-            compileTaskName = "compileDebugMacosX86-64Sha1Asm",
-            sourcePath = "src/nativeInterop/cinterop/asm/x64.S",
-            compiler = "clang",
-            compilerArgs = listOf("-c", "-x", "assembler-with-cpp", "-fPIC", "-arch", "x86_64"),
-        ),
-        Sha1AsmVariant(
-            staticLibraryTaskName = "createReleaseMacosX86-64",
-            compileTaskName = "compileReleaseMacosX86-64Sha1Asm",
-            sourcePath = "src/nativeInterop/cinterop/asm/x64.S",
-            compiler = "clang",
-            compilerArgs = listOf("-c", "-x", "assembler-with-cpp", "-fPIC", "-arch", "x86_64"),
-        ),
-        Sha1AsmVariant(
-            staticLibraryTaskName = "createDebugLinuxAarch64",
-            compileTaskName = "compileDebugLinuxAarch64Sha1Asm",
-            sourcePath = "src/nativeInterop/cinterop/asm/aarch64.S",
-            compiler = providers.environmentVariable("CC").getOrElse("cc"),
-            compilerArgs = listOf("-c", "-x", "assembler-with-cpp", "-fPIC", "-march=armv8-a+crypto"),
-        ),
-        Sha1AsmVariant(
-            staticLibraryTaskName = "createReleaseLinuxAarch64",
-            compileTaskName = "compileReleaseLinuxAarch64Sha1Asm",
-            sourcePath = "src/nativeInterop/cinterop/asm/aarch64.S",
-            compiler = providers.environmentVariable("CC").getOrElse("cc"),
-            compilerArgs = listOf("-c", "-x", "assembler-with-cpp", "-fPIC", "-march=armv8-a+crypto"),
-        ),
-        Sha1AsmVariant(
-            staticLibraryTaskName = "createDebugLinuxX86-64",
-            compileTaskName = "compileDebugLinuxX86-64Sha1Asm",
-            sourcePath = "src/nativeInterop/cinterop/asm/x64.S",
-            compiler = providers.environmentVariable("CC").getOrElse("cc"),
-            compilerArgs = listOf("-c", "-x", "assembler-with-cpp", "-fPIC"),
-        ),
-        Sha1AsmVariant(
-            staticLibraryTaskName = "createReleaseLinuxX86-64",
-            compileTaskName = "compileReleaseLinuxX86-64Sha1Asm",
-            sourcePath = "src/nativeInterop/cinterop/asm/x64.S",
-            compiler = providers.environmentVariable("CC").getOrElse("cc"),
-            compilerArgs = listOf("-c", "-x", "assembler-with-cpp", "-fPIC"),
-        ),
-    )
-
-data class Sha1AsmObjectTask(
-    val taskName: String,
-    val objectFile: Provider<RegularFile>,
-)
-
-val sha1AsmObjectTasksByStaticLibraryTask =
-    sha1AsmVariants.associate { variant ->
-        val sourceFile = layout.projectDirectory.file(variant.sourcePath)
-        val objectFile = layout.buildDirectory.file("obj/${variant.compileTaskName}/sha1_compress.o")
-        tasks.register<Exec>(variant.compileTaskName) {
-            inputs.file(sourceFile)
-            outputs.file(objectFile)
-            executable = variant.compiler
-            doFirst {
-                val output = objectFile.get().asFile
-                output.parentFile.mkdirs()
-                setArgs(variant.compilerArgs + listOf(sourceFile.asFile.absolutePath, "-o", output.absolutePath))
-            }
-        }
-        variant.staticLibraryTaskName to Sha1AsmObjectTask(variant.compileTaskName, objectFile)
-    }
-
-tasks.withType<CppCompile>().configureEach {
-    compilerArgs.addAll("-std=c++17", "-fPIC")
-    compilerArgs.addAll(
-        targetPlatform.map { platform ->
-            if (sha1AssemblySourceFor(platform) != null) listOf("-DSHA1_KOTLIN_HAS_UPSTREAM_ASM") else emptyList()
-        },
-    )
-
-    // Platform-specific args, resolved lazily — the plugin sets targetPlatform
-    // after this configureEach runs, so querying it eagerly fails.
-    compilerArgs.addAll(
-        targetPlatform.map { platform ->
-            if (platform.operatingSystem.isMacOsX) listOf("-stdlib=libc++") else emptyList()
-        },
-    )
-}
-
-tasks.withType<CreateStaticLibrary>().configureEach {
-    val asmObjectTask = sha1AsmObjectTasksByStaticLibraryTask[name] ?: return@configureEach
-    dependsOn(tasks.named(asmObjectTask.taskName))
-    source(files(asmObjectTask.objectFile).builtBy(tasks.named(asmObjectTask.taskName)))
-}
-
-// Ensure the static library is built before any cinterop task runs.
-tasks.withType<org.jetbrains.kotlin.gradle.tasks.CInteropProcess>().configureEach {
-    dependsOn(tasks.withType<CreateStaticLibrary>())
-}
-
-// ============================================================================
 kotlin {
     jvmToolchain(jvmToolchainVersion)
-
-    // Configure cinterop for the host-native target built by the cpp-library plugin.
-    targets.withType<KotlinNativeTarget>().matching { it.name.startsWith("macos") }.configureEach {
-        compilations.getByName("main") {
-            cinterops.create("sha1Asm") {
-                defFile = project.file("src/nativeInterop/cinterop/sha1_asm.def")
-                includeDirs(project.file("src/nativeInterop/cinterop"))
-            }
-        }
-    }
 
     applyDefaultHierarchyTemplate()
 
@@ -624,8 +436,7 @@ kotlin {
         addToXcf()
     }
 
-    // iosX64: Intel Mac simulator. Tier 3 in Kotlin/Native but NOT deprecated —
-    // Apple still ships x86_64 iOS simulator runtimes, so it is always built.
+    // iosX64: Intel Mac simulator. Tier 3 in Kotlin/Native.
     iosX64 {
         configureBenchmarkCompilation()
         addToXcf(static = true)
@@ -639,6 +450,258 @@ kotlin {
     // Android NDK — always built for supported 64-bit targets.
     androidNativeArm64 { configureBenchmarkCompilation() }
     androidNativeX64 { configureBenchmarkCompilation() }
+
+    // ========================================================================
+    // Per-target SHA-1 Assembly + C Wrapper Static Archive for cinterop
+    // ------------------------------------------------------------------------
+    // Compiles sha1_asm_wrapper.c and the target-appropriate assembly backend
+    // (aarch64_apple.S, aarch64.S, or x64.S) into build/cinterop-targets/<target>/sha1_asm_wrapper.a,
+    // which cinterop embeds directly into the produced .klib via `staticLibraries = sha1_asm_wrapper.a`.
+    // Falls back to the checked-in prebuilt archive at
+    // src/nativeInterop/cinterop/targets/<target>/sha1_asm_wrapper.a when cross-compiling
+    // on a host without the target's archiver/SDK.
+    // ========================================================================
+    targets.withType<KotlinNativeTarget>().configureEach {
+        val konanTargetName = konanTarget.name
+        val targetCapitalized = name.replaceFirstChar { it.uppercase() }
+        val wrapperTaskName = "compileSha1AsmWrapperFor$targetCapitalized"
+        val wrapperTask =
+            tasks.register(wrapperTaskName) {
+                group = "build"
+                description = "Compiles sha1_asm_wrapper.c and target ASM into sha1_asm_wrapper.a for $konanTargetName"
+                val cSource = file("src/nativeInterop/cinterop/sha1_asm_wrapper.c")
+                val hSource = file("src/nativeInterop/cinterop/sha1_asm_wrapper.h")
+                val asmDir = file("src/nativeInterop/cinterop/asm")
+                val prebuiltArchive = file("src/nativeInterop/cinterop/targets/$konanTargetName/sha1_asm_wrapper.a")
+                val outDir =
+                    layout.buildDirectory
+                        .dir("cinterop-targets/$konanTargetName")
+                        .get()
+                        .asFile
+                val outFile = File(outDir, "sha1_asm_wrapper.a")
+                inputs.file(cSource)
+                inputs.file(hSource)
+                inputs.dir(asmDir)
+                if (prebuiltArchive.exists()) {
+                    inputs.file(prebuiltArchive)
+                }
+                outputs.file(outFile)
+
+                doLast {
+                    outDir.mkdirs()
+                    if (outFile.exists()) outFile.delete()
+                    val wrapperObj = File(outDir, "sha1_asm_wrapper.o")
+                    val asmObj = File(outDir, "sha1_compress.o")
+                    val isMac =
+                        org.gradle.internal.os.OperatingSystem
+                            .current()
+                            .isMacOsX
+                    val isLinux =
+                        org.gradle.internal.os.OperatingSystem
+                            .current()
+                            .isLinux
+                    val execOps = project.serviceOf<ExecOperations>()
+                    val konanDeps = File(System.getProperty("user.home"), ".konan/dependencies")
+
+                    fun findLlvmAr(): String? {
+                        if (konanDeps.exists()) {
+                            val candidates =
+                                konanDeps
+                                    .listFiles()
+                                    ?.filter { it.isDirectory && (it.name.startsWith("llvm-") || it.name.startsWith("target-toolchain-")) }
+                                    ?.sortedByDescending { it.name }
+                                    .orEmpty()
+                            for (dir in candidates) {
+                                val bin = File(dir, if (isWindowsHost) "bin/llvm-ar.exe" else "bin/llvm-ar")
+                                if (bin.exists()) return bin.absolutePath
+                            }
+                        }
+                        return if (isLinux) "ar" else null
+                    }
+
+                    val isAppleTarget =
+                        konanTargetName.startsWith("macos") ||
+                            konanTargetName.startsWith("ios") ||
+                            konanTargetName.startsWith("tvos") ||
+                            konanTargetName.startsWith("watchos")
+
+                    var builtFromSource = false
+                    try {
+                        if (isMac && isAppleTarget) {
+                            val (appleTriple, sdkName) =
+                                when (konanTargetName) {
+                                    "macos_arm64" -> "arm64-apple-macos14.0" to "macosx"
+                                    "ios_arm64" -> "arm64-apple-ios14.0" to "iphoneos"
+                                    "ios_simulator_arm64" -> "arm64-apple-ios14.0-simulator" to "iphonesimulator"
+                                    "ios_x64" -> "x86_64-apple-ios14.0-simulator" to "iphonesimulator"
+                                    "tvos_arm64" -> "arm64-apple-tvos14.0" to "appletvos"
+                                    "tvos_simulator_arm64" -> "arm64-apple-tvos14.0-simulator" to "appletvsimulator"
+                                    "watchos_device_arm64" -> "arm64-apple-watchos7.0" to "watchos"
+                                    "watchos_simulator_arm64" -> "arm64-apple-watchos7.0-simulator" to "watchsimulator"
+                                    "watchos_arm64" -> "arm64_32-apple-watchos7.0" to "watchos"
+                                    else -> "arm64-apple-macos14.0" to "macosx"
+                                }
+                            val asmSpec: Pair<File, List<String>>? =
+                                when (konanTargetName) {
+                                    "ios_x64" -> File(asmDir, "x64.S") to emptyList()
+                                    "watchos_arm64" -> null
+                                    else -> File(asmDir, "aarch64_apple.S") to listOf("-march=armv8-a+crypto")
+                                }
+                            val cArgs =
+                                mutableListOf(
+                                    "xcrun",
+                                    "-sdk",
+                                    sdkName,
+                                    "clang",
+                                    "-target",
+                                    appleTriple,
+                                    "-O2",
+                                    "-Wall",
+                                    "-Wextra",
+                                    "-Werror",
+                                    "-fPIC",
+                                    "-I${cSource.parent}",
+                                )
+                            if (asmSpec != null) {
+                                cArgs.add("-DSHA1_KOTLIN_HAS_UPSTREAM_ASM")
+                            }
+                            cArgs.addAll(listOf("-c", cSource.absolutePath, "-o", wrapperObj.absolutePath))
+                            execOps.exec { commandLine(cArgs) }.assertNormalExitValue()
+
+                            val objs = mutableListOf(wrapperObj.absolutePath)
+                            if (asmSpec != null) {
+                                val (asmFile, extraFlags) = asmSpec
+                                val asmArgs =
+                                    mutableListOf(
+                                        "xcrun",
+                                        "-sdk",
+                                        sdkName,
+                                        "clang",
+                                        "-target",
+                                        appleTriple,
+                                        "-x",
+                                        "assembler-with-cpp",
+                                        "-fPIC",
+                                    )
+                                asmArgs.addAll(extraFlags)
+                                asmArgs.addAll(listOf("-c", asmFile.absolutePath, "-o", asmObj.absolutePath))
+                                execOps.exec { commandLine(asmArgs) }.assertNormalExitValue()
+                                objs.add(asmObj.absolutePath)
+                            }
+                            execOps
+                                .exec {
+                                    commandLine(listOf("xcrun", "-sdk", sdkName, "ar", "rcs", outFile.absolutePath) + objs)
+                                }.assertNormalExitValue()
+                            builtFromSource = true
+                        } else if (!isAppleTarget) {
+                            val arTool = findLlvmAr()
+                            if (arTool != null) {
+                                val (triple, asmSpec) =
+                                    when (konanTargetName) {
+                                        "linux_x64" -> {
+                                            "x86_64-unknown-linux-gnu" to (File(asmDir, "x64.S") to listOf("-fPIC"))
+                                        }
+
+                                        "linux_arm64" -> {
+                                            "aarch64-unknown-linux-gnu" to (File(asmDir, "aarch64.S") to listOf("-fPIC", "-march=armv8-a+crypto"))
+                                        }
+
+                                        "android_arm64" -> {
+                                            "aarch64-linux-android21" to (File(asmDir, "aarch64.S") to listOf("-fPIC", "-march=armv8-a+crypto"))
+                                        }
+
+                                        "android_x64" -> {
+                                            "x86_64-linux-android21" to (File(asmDir, "x64.S") to listOf("-fPIC"))
+                                        }
+
+                                        "mingw_x64" -> {
+                                            "x86_64-w64-mingw32" to null
+                                        }
+
+                                        else -> {
+                                            error("Unsupported native target: $konanTargetName")
+                                        }
+                                    }
+                                val cArgs =
+                                    mutableListOf(
+                                        "clang",
+                                        "--target=$triple",
+                                        "-ffreestanding",
+                                        "-O2",
+                                        "-Wall",
+                                        "-Wextra",
+                                        "-Werror",
+                                        "-I${cSource.parent}",
+                                    )
+                                if (konanTargetName != "mingw_x64") {
+                                    cArgs.add("-fPIC")
+                                }
+                                if (asmSpec != null) {
+                                    cArgs.add("-DSHA1_KOTLIN_HAS_UPSTREAM_ASM")
+                                }
+                                cArgs.addAll(listOf("-c", cSource.absolutePath, "-o", wrapperObj.absolutePath))
+                                execOps.exec { commandLine(cArgs) }.assertNormalExitValue()
+
+                                val objs = mutableListOf(wrapperObj.absolutePath)
+                                if (asmSpec != null) {
+                                    val (asmFile, extraFlags) = asmSpec
+                                    val asmArgs =
+                                        mutableListOf(
+                                            "clang",
+                                            "--target=$triple",
+                                            "-x",
+                                            "assembler-with-cpp",
+                                        )
+                                    asmArgs.addAll(extraFlags)
+                                    asmArgs.addAll(listOf("-c", asmFile.absolutePath, "-o", asmObj.absolutePath))
+                                    execOps.exec { commandLine(asmArgs) }.assertNormalExitValue()
+                                    objs.add(asmObj.absolutePath)
+                                }
+                                execOps
+                                    .exec {
+                                        commandLine(listOf(arTool, "rcs", outFile.absolutePath) + objs)
+                                    }.assertNormalExitValue()
+                                builtFromSource = true
+                            }
+                        }
+                    } catch (_: Exception) {
+                        builtFromSource = false
+                    } finally {
+                        if (wrapperObj.exists()) wrapperObj.delete()
+                        if (asmObj.exists()) asmObj.delete()
+                    }
+
+                    if (!builtFromSource || !outFile.exists() || outFile.length() == 0L) {
+                        if (prebuiltArchive.exists()) {
+                            prebuiltArchive.copyTo(outFile, overwrite = true)
+                        }
+                    }
+                    if (!outFile.exists() || outFile.length() == 0L) {
+                        throw GradleException(
+                            "compileSha1AsmWrapper failed: output library does not exist for $konanTargetName at ${outFile.absolutePath}",
+                        )
+                    }
+                }
+            }
+
+        compilations.getByName("main") {
+            cinterops.create("sha1Asm") {
+                defFile(project.file("src/nativeInterop/cinterop/sha1_asm.def"))
+                includeDirs(project.file("src/nativeInterop/cinterop"))
+                extraOpts(
+                    "-libraryPath",
+                    layout.buildDirectory
+                        .dir("cinterop-targets/$konanTargetName")
+                        .get()
+                        .asFile.absolutePath,
+                )
+            }
+        }
+        tasks.matching { it.name == "cinteropSha1Asm$targetCapitalized" }.configureEach {
+            dependsOn(wrapperTask)
+            inputs.files(wrapperTask)
+        }
+    }
 
     // Web
     js {
@@ -766,24 +829,24 @@ tasks.withType<KotlinJsTest>().configureEach {
 // Static analysis: Detekt + Ktlint
 // ============================================================================
 detekt {
-    buildUponDefaultConfig = true
-    allRules = false
-    autoCorrect = false
+    buildUponDefaultConfig.set(true)
+    allRules.set(false)
+    autoCorrect.set(false)
     source.setFrom(files("src"))
     config.setFrom(files("detekt.yml"))
-    parallel = true
+    parallel.set(true)
 }
 
-tasks.withType<io.gitlab.arturbosch.detekt.Detekt>().configureEach {
+tasks.withType<dev.detekt.gradle.Detekt>().configureEach {
     reports {
         html.required.set(true)
         sarif.required.set(true)
-        txt.required.set(false)
-        xml.required.set(false)
+        checkstyle.required.set(false)
     }
 }
 
 ktlint {
+    version.set(libs.versions.ktlintEngine.get())
     debug.set(false)
     verbose.set(false)
     android.set(false)
@@ -801,7 +864,7 @@ ktlint {
 
 if (benchmarkEnabled) {
     tasks
-        .withType<io.gitlab.arturbosch.detekt.Detekt>()
+        .withType<dev.detekt.gradle.Detekt>()
         .matching {
             it.name.contains("BenchmarkBenchmark")
         }.configureEach {
@@ -817,7 +880,7 @@ if (benchmarkEnabled) {
 }
 
 tasks.named("check") {
-    dependsOn(tasks.withType<io.gitlab.arturbosch.detekt.Detekt>())
+    dependsOn(tasks.withType<dev.detekt.gradle.Detekt>())
     dependsOn(tasks.named("ktlintCheck"))
     dependsOn("test")
 }
@@ -843,15 +906,23 @@ val webpackVersion: String =
 
 rootProject.extensions.configure<NodeJsEnvSpec>("kotlinNodeJsSpec") { version.set(nodeVersion) }
 rootProject.extensions.configure<WasmNodeJsEnvSpec>("kotlinWasmNodeJsSpec") { version.set(wasmNodeVersion) }
-rootProject.extensions.configure<YarnRootEnvSpec>("kotlinYarnSpec") { version.set(yarnVersion) }
-rootProject.extensions.configure<WasmYarnRootEnvSpec>("kotlinWasmYarnSpec") { version.set(wasmYarnVersion) }
+rootProject.extensions.configure<YarnRootEnvSpec>("kotlinYarnSpec") {
+    version.set(yarnVersion)
+    yarnLockMismatchReport.set(org.jetbrains.kotlin.gradle.targets.js.yarn.YarnLockMismatchReport.WARNING)
+    yarnLockAutoReplace.set(true)
+}
+rootProject.extensions.configure<WasmYarnRootEnvSpec>("kotlinWasmYarnSpec") {
+    version.set(wasmYarnVersion)
+    yarnLockMismatchReport.set(org.jetbrains.kotlin.gradle.targets.js.yarn.YarnLockMismatchReport.WARNING)
+    yarnLockAutoReplace.set(true)
+}
 
 rootProject.extensions.configure<YarnRootExtension>("kotlinYarn") {
-    project.properties
-        .filterKeys { it.startsWith("yarn.resolution.") }
-        .forEach { (key, value) ->
+    providers
+        .gradlePropertiesPrefixedBy("yarn.resolution.")
+        .getOrElse(emptyMap())
+        .forEach { (key, ver) ->
             val pkg = key.removePrefix("yarn.resolution.")
-            val ver = value as? String ?: return@forEach
             resolution(pkg, ver)
             resolution("**/$pkg", ver)
         }
@@ -879,14 +950,54 @@ rootProject.extensions.configure<NodeJsRootExtension>("kotlinNodeJs") {
     versions.kotlinWebHelpers.version = providers.gradleProperty("node.kotlinWebHelpers.version").getOrElse("3.1.0")
 }
 
+// Make kotlinUpgradeYarnLock and kotlinWasmUpgradeYarnLock dependencies in the build process
+// for KotlinJS and other JavaScript/WASM targets so that yarn.lock is always upgraded automatically.
+val jsTasksNeedingYarnLock =
+    setOf(
+        "compileKotlinJs",
+        "compileTestKotlinJs",
+        "jsProcessResources",
+        "jsTestProcessResources",
+        "jsNodeTest",
+        "jsBrowserTest",
+        "kotlinStoreYarnLock",
+    )
+
+tasks
+    .matching { it.name in jsTasksNeedingYarnLock }
+    .configureEach {
+        dependsOn("kotlinUpgradeYarnLock")
+    }
+
+val wasmTasksNeedingYarnLock =
+    setOf(
+        "compileKotlinWasmJs",
+        "compileTestKotlinWasmJs",
+        "wasmJsProcessResources",
+        "wasmJsTestProcessResources",
+        "wasmJsNodeTest",
+        "wasmJsBrowserTest",
+        "compileKotlinWasmWasi",
+        "compileTestKotlinWasmWasi",
+        "wasmWasiProcessResources",
+        "wasmWasiTestProcessResources",
+        "wasmWasiNodeTest",
+        "kotlinWasmStoreYarnLock",
+    )
+
+tasks
+    .matching { it.name in wasmTasksNeedingYarnLock }
+    .configureEach {
+        dependsOn("kotlinWasmUpgradeYarnLock")
+    }
+
 // ============================================================================
 // Maven Central publishing — Central Portal, first-party + bespoke upload
 // ----------------------------------------------------------------------------
 // OSSRH was sunset 2025-06-30; the Central Portal is the only path. Sonatype
 // ships no first-party Gradle plugin, so we use Gradle's own maven-publish +
 // signing (KGP populates the KMP publications) and upload the deployment
-// bundle to the Portal API ourselves. No convenience plugin = no clash with
-// cpp-library's native publication.
+// bundle to the Portal API ourselves.
 //
 // Flow: publish all KMP publications into a local staging Maven layout ->
 // zip it -> POST the zip to the Portal upload endpoint with a Bearer token.
@@ -899,13 +1010,8 @@ val emptyJavadocJar by tasks.registering(Jar::class) {
     archiveClassifier.set("javadoc")
 }
 
-// The cpp-library plugin registers a native publication named "main" (artifactId
-// sha1_asm). It is internal tooling consumed by cinterop — never shipped
-// to Maven Central — so it is excluded from POM config, staging, and the bundle.
-val cppLibraryPublicationName = "main"
-
 publishing {
-    publications.withType<MavenPublication>().matching { !it.name.startsWith(cppLibraryPublicationName) }.configureEach {
+    publications.withType<MavenPublication>().configureEach {
         artifact(emptyJavadocJar)
         pom {
             name.set(publishProjectName)
@@ -957,24 +1063,18 @@ signing {
     val signingEnabled = project.findProperty("RELEASE_SIGNING_ENABLED") != "false" && signingKey != null
     if (signingEnabled) {
         useInMemoryPgpKeys(signingKeyId, signingKey, signingPassword)
-        sign(publishing.publications.matching { !it.name.startsWith(cppLibraryPublicationName) })
+        sign(publishing.publications)
     }
 }
 
 val centralPortalPublishTasks =
     tasks.withType<PublishToMavenRepository>().matching {
-        it.name.endsWith("ToCentralPortalStagingRepository") && !it.name.startsWith("publishMain")
+        it.name.endsWith("ToCentralPortalStagingRepository")
     }
 
 centralPortalPublishTasks.configureEach {
     dependsOn(tasks.withType<Sign>())
 }
-
-// Never stage/publish the C++ wrapper publication to Maven Central.
-tasks
-    .matching {
-        it.name.startsWith("publishMain") && it.name.contains("Publication")
-    }.configureEach { enabled = false }
 
 // Zip the staged Maven layout into a single Central Portal deployment bundle.
 val centralPortalBundle by tasks.registering(Zip::class) {
@@ -1077,7 +1177,10 @@ val publishToCentralPortal by tasks.registering {
                 statusBody["deploymentState"]?.toString()
                     ?: error("Central Portal status response did not contain deploymentState: ${statusResponse.body()}")
             when (deploymentState) {
-                "FAILED" -> error("Central Portal deployment failed: ${statusBody["errors"] ?: statusResponse.body()}")
+                "FAILED" -> {
+                    error("Central Portal deployment failed: ${statusBody["errors"] ?: statusResponse.body()}")
+                }
+
                 in terminalStates -> {
                     logger.lifecycle("Central Portal deployment $deploymentId reached $deploymentState.")
                     return@doLast
@@ -1127,7 +1230,9 @@ tasks.register("hostTests") {
     dependsOn(
         "jvmTest",
         "macosArm64Test",
+        "kotlinUpgradeYarnLock",
         "jsNodeTest",
+        "kotlinWasmUpgradeYarnLock",
         "wasmJsNodeTest",
         "wasmWasiNodeTest",
         "testAndroidHostTest",
@@ -1262,6 +1367,8 @@ val fullTargetBuildTaskNames =
                 "assembleAndroidDeviceTest",
                 "jvmMainClasses",
                 "jvmTestClasses",
+                "kotlinUpgradeYarnLock",
+                "kotlinWasmUpgradeYarnLock",
                 "jsMainClasses",
                 "jsTestClasses",
                 "wasmJsMainClasses",
