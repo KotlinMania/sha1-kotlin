@@ -6,6 +6,7 @@ package io.github.kotlinmania.sha1
 import io.github.kotlinmania.digest.Digest
 import io.github.kotlinmania.digest.dev.feedRand16mib
 import io.github.kotlinmania.digest.dev.fixedResetTest
+import io.github.kotlinmania.sha1.compress.compress
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -135,7 +136,7 @@ class Sha1Test {
     }
 
     @Test
-    fun topLevelCompressReExportMatchesBackend() {
+    fun compressMatchesBackend() {
         val state = uintArrayOf(0x67452301u, 0xEFCDAB89u, 0x98BADCFEu, 0x10325476u, 0xC3D2E1F0u)
         val block = ByteArray(64)
         block[0] = 0x80.toByte()
@@ -144,6 +145,24 @@ class Sha1Test {
             uintArrayOf(0xDA39A3EEu, 0x5E6B4B0Du, 0x3255BFEFu, 0x95601890u, 0xAFD80709u),
             state,
         )
+    }
+
+    @Test
+    fun zeroizeClearsCoreState() {
+        val core = Sha1Core()
+        core.updateBlocks(arrayOf(ByteArray(64) { 1 }))
+        core.zeroize()
+        assertEquals(0uL, core.blockLen)
+        assertContentEquals(SHA1_INITIAL_STATE, core.h)
+    }
+
+    @Test
+    fun zeroizeClearsSha1Hasher() {
+        val hasher = Sha1.new()
+        hasher.update("hello world".encodeToByteArray())
+        hasher.zeroize()
+        val emptyDigest = hasher.finalize()
+        assertContentEquals(hex("da39a3ee5e6b4b0d3255bfef95601890afd80709"), emptyDigest)
     }
 
     @Test
