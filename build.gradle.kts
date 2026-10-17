@@ -115,6 +115,12 @@ val intellijCoroutinesVersion =
 // dependency population, so keep the default embeddable runner explicit too.
 val projectDependencyHandler = project.dependencies
 configurations.configureEach {
+    // proc-macro-kotlin's published Android artifact bundles the JetBrains
+    // annotation classes, which duplicate org.jetbrains:annotations on the
+    // Android device-test classpath.
+    if (name.contains("androidDeviceTest", ignoreCase = true)) {
+        exclude(group = "org.jetbrains", module = "annotations")
+    }
     if (name == "swiftExportClasspath") {
         dependencies.add(projectDependencyHandler.create("org.jetbrains.kotlin:swift-export-embeddable:$kotlinVersion"))
         dependencies.add(
@@ -423,10 +429,7 @@ kotlin {
         configureBenchmarkCompilation()
         addToXcf()
     }
-    watchosArm64 {
-        configureBenchmarkCompilation()
-        addToXcf()
-    }
+    // watchosArm64 (WatchOS 32 / arm64_32): retired by workspace policy (§5.5.1). WatchOS 32 is not supported.
     watchosDeviceArm64 {
         configureBenchmarkCompilation()
         addToXcf()
@@ -434,12 +437,6 @@ kotlin {
     watchosSimulatorArm64 {
         configureBenchmarkCompilation()
         addToXcf()
-    }
-
-    // iosX64: Intel Mac simulator. Tier 3 in Kotlin/Native.
-    iosX64 {
-        configureBenchmarkCompilation()
-        addToXcf(static = true)
     }
 
     // Other native — Tier 1/2
@@ -533,20 +530,14 @@ kotlin {
                                     "macos_arm64" -> "arm64-apple-macos14.0" to "macosx"
                                     "ios_arm64" -> "arm64-apple-ios14.0" to "iphoneos"
                                     "ios_simulator_arm64" -> "arm64-apple-ios14.0-simulator" to "iphonesimulator"
-                                    "ios_x64" -> "x86_64-apple-ios14.0-simulator" to "iphonesimulator"
                                     "tvos_arm64" -> "arm64-apple-tvos14.0" to "appletvos"
                                     "tvos_simulator_arm64" -> "arm64-apple-tvos14.0-simulator" to "appletvsimulator"
                                     "watchos_device_arm64" -> "arm64-apple-watchos7.0" to "watchos"
                                     "watchos_simulator_arm64" -> "arm64-apple-watchos7.0-simulator" to "watchsimulator"
-                                    "watchos_arm64" -> "arm64_32-apple-watchos7.0" to "watchos"
                                     else -> "arm64-apple-macos14.0" to "macosx"
                                 }
                             val asmSpec: Pair<File, List<String>>? =
-                                when (konanTargetName) {
-                                    "ios_x64" -> File(asmDir, "x64.S") to emptyList()
-                                    "watchos_arm64" -> null
-                                    else -> File(asmDir, "aarch64_apple.S") to listOf("-march=armv8-a+crypto")
-                                }
+                                File(asmDir, "aarch64_apple.S") to listOf("-march=armv8-a+crypto")
                             val cArgs =
                                 mutableListOf(
                                     "xcrun",
@@ -1342,14 +1333,12 @@ val nativeTargetNames =
         "androidNativeX64",
         "iosArm64",
         "iosSimulatorArm64",
-        "iosX64",
         "linuxArm64",
         "linuxX64",
         "macosArm64",
         "mingwX64",
         "tvosArm64",
         "tvosSimulatorArm64",
-        "watchosArm64",
         "watchosDeviceArm64",
         "watchosSimulatorArm64",
     )
