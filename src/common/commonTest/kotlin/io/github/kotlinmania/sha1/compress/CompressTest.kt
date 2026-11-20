@@ -78,5 +78,10 @@ class CompressTest {
         val unchanged = initialState()
         compress(unchanged, emptyArray())
         assertContentEquals(initialState(), unchanged)
+
+        val listState = initialState()
+        compress(listState, listOf(padSingleBlock(byteArrayOf(0x61, 0x62, 0x63))))
+        assertEquals(0xA9993E36u, listState[0])
+        assertEquals(0x9CD0D89Du, listState[4])
     }
 }

@@ -85,7 +85,7 @@ class Sha1Core :
         compress(h, blocks.toTypedArray())
     }
 
-    fun updateBlocks(blocks: Array<ByteArray>) {
+    internal fun updateBlocks(blocks: Array<ByteArray>) {
         updateBlocks(blocks.asList())
     }
 

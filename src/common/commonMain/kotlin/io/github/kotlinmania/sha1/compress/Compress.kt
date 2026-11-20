@@ -16,6 +16,10 @@ internal expect fun platformCompress(state: UIntArray, blocks: Array<ByteArray>)
  * The upstream implementation reinterprets compressed blocks between
  * contiguous array views before calling the selected backend implementation.
  */
-fun compress(state: UIntArray, blocks: Array<ByteArray>) {
+fun compress(state: UIntArray, blocks: List<ByteArray>) {
+    platformCompress(state, blocks.toTypedArray())
+}
+
+internal fun compress(state: UIntArray, blocks: Array<ByteArray>) {
     platformCompress(state, blocks)
 }
