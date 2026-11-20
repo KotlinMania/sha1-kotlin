@@ -5,9 +5,9 @@ Based on AST analysis, here are the concrete next steps.
 ## Summary
 
 - **Files Present:** 5/6 (83.3%)
-- **Function parity:** 17/17 matched (target 30) — 100.0%
-- **Class/type parity:** 0/0 matched (target 2) — N/A
-- **Combined symbol parity:** 17/17 matched (target 32) — 100.0%
+- **Function parity:** 17/17 matched (target 24) — 100.0%
+- **Class/type parity:** 0/0 matched (target 1) — N/A
+- **Combined symbol parity:** 17/17 matched (target 25) — 100.0%
 - **Average inline-code cosine:** 0.19 (function body across 5 matched files)
 - **Average documentation cosine:** 0.30 (doc text across 5 matched files)
 - **Cheat-zeroed Files:** 0
@@ -46,9 +46,9 @@ Every matched file is listed below with function and type symbol parity.
 - **Similarity:** 0.38
 - **Dependents:** 0
 - **Priority Score:** 1206.2
-- **Functions:** 12/12 matched (target 25)
+- **Functions:** 12/12 matched (target 19)
 - **Missing functions:** _none_
-- **Types:** 0/0 matched (target 2)
+- **Types:** 0/0 matched (target 1)
 - **Missing types:** _none_
 
 ### 3. compress.x86

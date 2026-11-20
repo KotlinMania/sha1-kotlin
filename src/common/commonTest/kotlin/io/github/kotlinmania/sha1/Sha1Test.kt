@@ -120,9 +120,11 @@ class Sha1Test {
 
     @Test
     fun algorithmNameAndOidAndFormatMatchUpstream() {
+        assertEquals("Sha1", Sha1Core.default().writeAlgName())
         assertEquals("Sha1", Sha1Core().writeAlgName())
         assertEquals("1.3.14.3.2.26", Sha1Core.OID)
         assertEquals("1.3.14.3.2.26", Sha1.OID)
+        assertEquals("Sha1Core { ... }", Sha1Core.default().fmt())
         assertEquals("Sha1Core { ... }", Sha1Core().toString())
         assertEquals("Sha1 { .. }", Sha1().toString())
     }
