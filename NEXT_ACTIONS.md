@@ -5,13 +5,15 @@ Based on AST analysis, here are the concrete next steps.
 ## Summary
 
 - **Files Present:** 5/6 (83.3%)
-- **Function parity:** 17/17 matched (target 30) — 100.0%
-- **Class/type parity:** 0/0 matched (target 2) — N/A
-- **Combined symbol parity:** 17/17 matched (target 32) — 100.0%
-- **Average inline-code cosine:** 0.54 (function body across 5 matched files)
+- **Function parity:** 17/17 matched (target 25) — 100.0%
+- **Class/type parity:** 0/0 matched (target 1) — N/A
+- **Combined symbol parity:** 17/17 matched (target 26) — 100.0%
+- **Average inline-code cosine:** 0.19 (function body across 5 matched files)
 - **Average documentation cosine:** 0.30 (doc text across 5 matched files)
 - **Cheat-zeroed Files:** 0
-- **Critical Issues:** 2 files with <0.60 function similarity
+- **Critical Issues:** 5 files with <0.60 function similarity
+- **Needs Review:** 0 files with 0.60-0.84 function similarity
+- **Excellent:** 0 files with >=0.85 function similarity
 
 ## Priority 1: Fix Incomplete High-Dependency Files
 
@@ -30,10 +32,10 @@ Every matched file is listed below with function and type symbol parity.
 ### 1. compress
 
 - **Target:** `compress.Compress`
-- **Similarity:** 0.73
+- **Similarity:** 0.16
 - **Dependents:** 1
-- **Priority Score:** 1000102.8
-- **Functions:** 1/1 matched
+- **Priority Score:** 1000108.4
+- **Functions:** 1/1 matched (target 2)
 - **Missing functions:** _none_
 - **Types:** 0/0 matched
 - **Missing types:** _none_
@@ -41,20 +43,20 @@ Every matched file is listed below with function and type symbol parity.
 ### 2. compress.soft
 
 - **Target:** `soft.Soft`
-- **Similarity:** 0.65
+- **Similarity:** 0.38
 - **Dependents:** 0
-- **Priority Score:** 1203.5
-- **Functions:** 12/12 matched (target 25)
+- **Priority Score:** 1206.2
+- **Functions:** 12/12 matched (target 19)
 - **Missing functions:** _none_
-- **Types:** 0/0 matched (target 2)
+- **Types:** 0/0 matched (target 1)
 - **Missing types:** _none_
 
 ### 3. compress.x86
 
 - **Target:** `x86.X86`
-- **Similarity:** 0.54
+- **Similarity:** 0.21
 - **Dependents:** 0
-- **Priority Score:** 204.6
+- **Priority Score:** 207.9
 - **Functions:** 2/2 matched
 - **Missing functions:** _none_
 - **Types:** 0/0 matched
@@ -63,9 +65,9 @@ Every matched file is listed below with function and type symbol parity.
 ### 4. compress.loongarch64_asm
 
 - **Target:** `loongarch64asm.Loongarch64Asm`
-- **Similarity:** 0.10
+- **Similarity:** 0.00
 - **Dependents:** 0
-- **Priority Score:** 109.0
+- **Priority Score:** 110.0
 - **Functions:** 1/1 matched
 - **Missing functions:** _none_
 - **Types:** 0/0 matched
@@ -74,9 +76,9 @@ Every matched file is listed below with function and type symbol parity.
 ### 5. compress.aarch64
 
 - **Target:** `aarch64.Aarch64`
-- **Similarity:** 0.71
+- **Similarity:** 0.18
 - **Dependents:** 0
-- **Priority Score:** 102.9
+- **Priority Score:** 108.2
 - **Functions:** 1/1 matched
 - **Missing functions:** _none_
 - **Types:** 0/0 matched

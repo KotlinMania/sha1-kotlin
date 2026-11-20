@@ -1,0 +1,87 @@
+// port-lint: tests compress/soft.rs
+@file:OptIn(ExperimentalUnsignedTypes::class)
+
+package io.github.kotlinmania.sha1.compress
+
+import io.github.kotlinmania.sha1.compress.soft.compressSoft
+import kotlin.test.Test
+import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+
+class CompressTest {
+    private fun initialState(): UIntArray =
+        uintArrayOf(0x67452301u, 0xEFCDAB89u, 0x98BADCFEu, 0x10325476u, 0xC3D2E1F0u)
+
+    private fun padSingleBlock(message: ByteArray): ByteArray {
+        require(message.size < 56) { "single-block helper assumes message fits in one padded block" }
+        val block = ByteArray(BLOCK_SIZE)
+        message.copyInto(block)
+        block[message.size] = 0x80.toByte()
+        val bitLen: Long = message.size.toLong() * 8
+        for (i in 0 until 8) {
+            block[BLOCK_SIZE - 1 - i] = ((bitLen ushr (i * 8)) and 0xFFL).toByte()
+        }
+        return block
+    }
+
+    @Test
+    fun emptyStringMatchesKnownDigest() {
+        val state = initialState()
+        compress(state, arrayOf(padSingleBlock(ByteArray(0))))
+        assertEquals(0xDA39A3EEu, state[0])
+        assertEquals(0x5E6B4B0Du, state[1])
+        assertEquals(0x3255BFEFu, state[2])
+        assertEquals(0x95601890u, state[3])
+        assertEquals(0xAFD80709u, state[4])
+    }
+
+    @Test
+    fun abcMatchesKnownDigest() {
+        val state = initialState()
+        compress(state, arrayOf(padSingleBlock(byteArrayOf(0x61, 0x62, 0x63))))
+        assertEquals(0xA9993E36u, state[0])
+        assertEquals(0x4706816Au, state[1])
+        assertEquals(0xBA3E2571u, state[2])
+        assertEquals(0x7850C26Cu, state[3])
+        assertEquals(0x9CD0D89Du, state[4])
+    }
+
+    @Test
+    fun zeroBlockMatchesUpstreamBenchVector() {
+        val state = UIntArray(5)
+        compress(state, arrayOf(ByteArray(BLOCK_SIZE)))
+        assertContentEquals(
+            uintArrayOf(0x9E1547EDu, 0x57EC91C2u, 0x30FA8BC8u, 0xC7785A54u, 0xA7EFA5E3u),
+            state,
+        )
+
+        val softState = UIntArray(5)
+        compressSoft(softState, arrayOf(ByteArray(BLOCK_SIZE)))
+        assertContentEquals(state, softState)
+    }
+
+    @Test
+    fun multipleBlocksAndEmptyBlocksMatchSoftBackend() {
+        val blocks = arrayOf(padSingleBlock(byteArrayOf(0x61, 0x62, 0x63)), ByteArray(BLOCK_SIZE))
+        val state = initialState()
+        compress(state, blocks)
+
+        val softState = initialState()
+        compressSoft(softState, blocks)
+
+        assertContentEquals(
+            uintArrayOf(0xE138DC24u, 0x275DCCF0u, 0x40E8DFF7u, 0x0E2E258Eu, 0xAA13BE7Du),
+            state,
+        )
+        assertContentEquals(softState, state)
+
+        val unchanged = initialState()
+        compress(unchanged, emptyArray())
+        assertContentEquals(initialState(), unchanged)
+
+        val listState = initialState()
+        compress(listState, listOf(padSingleBlock(byteArrayOf(0x61, 0x62, 0x63))))
+        assertEquals(0xA9993E36u, listState[0])
+        assertEquals(0x9CD0D89Du, listState[4])
+    }
+}
