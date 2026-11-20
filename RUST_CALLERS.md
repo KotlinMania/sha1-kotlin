@@ -19,7 +19,7 @@ For every Rust crate this repo owns (under `tmp/`), this file lists every **cros
 | `blobby` | `blobby` | 1 | 1 | 1 | 0 |
 | `block-buffer` | `block_buffer` | 6 | 1 | 1 | 0 |
 | `cc` | `cc` | 0 | 0 | 0 | 0 |
-| `cfg-if` | `cfg_if` | 1 | 1 | 1 | 0 |
+| `cfg-if` | `cfg_if` | 0 | 0 | 0 | 0 |
 | `const-oid` | `const_oid` | 5 | 1 | 1 | 0 |
 | `cpufeatures` | `cpufeatures` | 0 | 0 | 0 | 0 |
 | `crypto-common` | `crypto_common` | 62 | 1 | 1 | 0 |
@@ -76,13 +76,7 @@ _No cross-repo callers in the workspace._
 
 ## `cfg-if`
 
-### Inbound symbols (1 distinct, 1 total `use` sites)
-
-Sorted by codex demand, then total demand. The first symbols are the priority queue for porting `cfg-if`.
-
-#### `cfg_if::cfg_if` — 1 site(s) (0 codex, 1 other, 1 caller crates)
-
-- `pathdiff-kotlin/pathdiff` `src/lib.rs:173` — `use cfg_if::cfg_if`
+_No cross-repo callers in the workspace._
 
 ## `const-oid`
 
